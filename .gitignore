@@ -1,0 +1,8 @@
+# Dataset 폴더 제외
+vision/EVCI/datasets/EVCI
+vision/EVCI/models/
+
+# 캐시/임시 파일
+*.cache
+*.log
+*.tmp
