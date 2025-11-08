@@ -1,3 +1,27 @@
+/**
+ * InputController 키 매핑 정리
+ *
+ * 1) 모드/토글
+ *  - Space: IK ON/OFF 토글
+ *  - M: TEST_M1_SPIN 토글
+ *  - N: TEST_M2_SWEEP 토글
+ *  - B/V/C/X: Motor3~6 TEST_SWEEP 토글
+ *  - F: single ↔ stereo 뷰 토글
+ *  - G: triple 뷰 고정
+ *
+ * 2) IK 타겟 이동
+ *  - W/S: z-축 -, +
+ *  - A/D: x-축 -, +
+ *  - Q/E: y-축 -, +
+ *
+ * 3) 조인트 프리셋
+ *  - 8/9/0: Motor1 0°, +45°, -45°
+ *  - U/I/O: Motor2 0°, +45°, -45°
+ *
+ * 4) 조그(JOG) 제어
+ *  - 1~6: Motor1~6 조그 (Shift와 함께 누르면 반대 방향)
+ *  - Z: Motor7 조그
+ */
 // src/control/inputController.js
 const RAD = (d) => (d * Math.PI) / 180;
 

@@ -31,6 +31,33 @@ import { InputController } from './control/inputController.js';
 import { StereoRig } from './sensors/stereoRig.js';
 import { JOINT_ORDER } from './config/jointMeta.js';
 
+const RAD = (deg) => (deg * Math.PI) / 180;
+
+let plugMarker = null;
+let plugFrame = null;
+let portFrame = null;
+let lastPlugPos = null;
+let lastPortPos = null;
+let lastDiffPos = null;
+
+let lastStepSent = 0;
+const STEP_INTERVAL_MS = 100;
+
+async function sendRlStep(state) {
+  try {
+    const res = await fetch('http://localhost:3000/api/rl/step', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    });
+    const data = await res.json();
+    console.log('[RL] action from server', data.action);
+    // 나중에 여기서 robot에 실제로 적용
+  } catch (err) {
+    console.error('[RL] step error', err);
+  }
+}
+
 let frustumLObj = null;
 let frustumRObj = null;
 
@@ -229,7 +256,26 @@ loader.load('/untitled.glb', (gltf) => {
   // attach robot joints
   robot.attach(ur10);
 
-  // EE tip mount + stereo
+  // 초기 자세 설정: 로봇팔을 충전구 쪽으로 약간 더 전방/전진하도록 조정
+  const initialAngles = {
+    Motor1: RAD(20),   // 베이스를 약간 회전시켜 충전구 쪽을 향하게
+    Motor2: RAD(-55),  // 어깨: 앞으로 숙이기
+    Motor3: RAD(75),   // 팔꿈치: 적당히 굽히기
+    Motor4: RAD(-35),  // 손목1: 자세 보정
+    Motor5: RAD(80),   // 손목2: 카메라/충전건이 아래를 향하게
+    Motor6: RAD(0),    // 손목3: 롤 기본값
+    Motor7: RAD(0),    // EE 추가 축 (있다면)
+  };
+  for (const [name, angle] of Object.entries(initialAngles)) {
+    if (robot.joints[name] != null) {
+      robot.setJointAngle(name, angle);
+    }
+  }
+  if (typeof robot.applyFK === 'function') {
+    robot.applyFK();
+  }
+
+  // EE tip mount + stereo + plug frame
   const eeNode = robot.joints['Motor7'];
   if (eeNode) {
     const tipMount = new THREE.Object3D();
@@ -242,6 +288,13 @@ loader.load('/untitled.glb', (gltf) => {
 
     eeNode.add(tipMount);
 
+    // 충전건 팁 좌표계 (PlugFrame): tipMount 기준, 앞으로 약간 내민 위치라고 가정
+    plugFrame = new THREE.Object3D();
+    plugFrame.name = 'PlugFrame';
+    // 필요에 따라 offset 조정 가능
+    plugFrame.position.set(0.0, -0.10, -0.08);
+    tipMount.add(plugFrame);
+
     // 스테레오 리그(실제 카메라 객체들: camL, camR)
     stereo = new StereoRig({
       fov: 60,
@@ -253,6 +306,15 @@ loader.load('/untitled.glb', (gltf) => {
       zOffset: 0.0,
     });
     stereo.attachTo(tipMount);
+
+    // 충전건 팁 위치 시각화를 위한 빨간 마커 생성 (한 번만 생성)
+    if (!plugMarker) {
+      const markerGeom = new THREE.SphereGeometry(0.015, 16, 16);
+      const markerMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+      plugMarker = new THREE.Mesh(markerGeom, markerMat);
+      plugMarker.name = 'PlugMarker';
+      scene.add(plugMarker);
+    }
   }
 });
 
@@ -265,17 +327,32 @@ chargerLoader.load(
     chargerRoot.name = 'charger_root';
 
     // place the charger in the scene (tweak as needed)
-    chargerRoot.position.set(0.8, 0.9, 0.2);
+    chargerRoot.position.set(0.8, 0.9, 0.1);
     // Rotate the port so it faces the robot arm (tweak angles as needed)
     chargerRoot.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
     chargerRoot.scale.set(1, 1, 1);
 
     // add to scene so it's visible
     scene.add(chargerRoot);
+    chargerRoot.traverse((o) => {
+      console.log('[charger child]', o.name);
+    });
 
     // try to get specific sub-meshes if they exist
-    chargerPort = chargerRoot.getObjectByName('charger_port');
+    chargerPort = chargerRoot.getObjectByName('Port');
     const chargerCap = chargerRoot.getObjectByName('charger_cap');
+
+    // 충전구 결합 중심 좌표계 (PortFrame)
+    portFrame = new THREE.Object3D();
+    portFrame.name = 'PortFrame';
+    if (chargerPort) {
+      chargerPort.add(portFrame);
+    } else {
+      chargerRoot.add(portFrame);
+    }
+    // 연결 중심을 눈으로 보기 위한 축 표시
+    const portAxes = new THREE.AxesHelper(0.1);
+    portFrame.add(portAxes);
 
     // hide the cap if present (we only care about the socket)
     if (chargerCap) {
@@ -299,8 +376,33 @@ function tick() {
   const t = clock.getElapsedTime();
   controls.update();
 
-  // IK
-  if (input.IK_ON && robot.root) robot.solveIK_CCD(ikTarget.position, 32, 1e-3);
+  // IK (with joint speed limiting)
+  if (input.IK_ON && robot.root) {
+    // 1) 현재 관절 각도 백업
+    const prevAngles = {};
+    for (const name of JOINT_ORDER) {
+      prevAngles[name] = robot.angles[name] ?? 0;
+    }
+
+    // 2) IK로 목표 각도 계산 (충분히 수렴시키되, 실제 적용은 아래에서 제한)
+    const ITER_PER_FRAME = 32;
+    robot.solveIK_CCD(ikTarget.position, ITER_PER_FRAME, 1e-3);
+
+    // 3) 프레임당 관절 최대 변화량 제한 (rad 단위)
+    const MAX_STEP = 0.01; // 약 1.1도 정도
+
+    for (const name of JOINT_ORDER) {
+      const prev = prevAngles[name];
+      const cur = robot.angles[name] ?? prev;
+      let diff = cur - prev;
+
+      if (diff > MAX_STEP) diff = MAX_STEP;
+      else if (diff < -MAX_STEP) diff = -MAX_STEP;
+
+      const limited = prev + diff;
+      robot.setJointAngle(name, limited);
+    }
+  }
   ikArrow.position.copy(ikTarget.position);
 
   // held jog
@@ -313,49 +415,65 @@ function tick() {
   const dt = (now - lastT) / 1000;
   lastT = now;
   fps = 0.9 * fps + 0.1 * (1 / dt);
-  hud.update(robot, window.VIEW_MODE, `| ${fps.toFixed(0)} fps`);
-  // --- pose 읽기 (충전구 & EE) ---
-  if (chargerPort && robot.joints['Motor7']) {
+  let hudText = `| ${fps.toFixed(0)} fps`;
+  // --- pose 읽기 (충전구 & 충전건 팁) ---
+  if (plugFrame && portFrame) {
     // 월드 좌표계로 업데이트
     scene.updateMatrixWorld(true);
 
-    // 충전구 포트 pose
+    // 충전구 결합 중심 pose (PortFrame)
     const portPos = new THREE.Vector3();
     const portQuat = new THREE.Quaternion();
-    chargerPort.getWorldPosition(portPos);
-    chargerPort.getWorldQuaternion(portQuat);
+    portFrame.getWorldPosition(portPos);
+    portFrame.getWorldQuaternion(portQuat);
 
     const portEuler = new THREE.Euler();
     portEuler.setFromQuaternion(portQuat, 'XYZ');
 
-    // EE pose (end effector)
-    const eeNode = robot.joints['Motor7'];
-    const eePos = new THREE.Vector3();
-    const eeQuat = new THREE.Quaternion();
-    eeNode.getWorldPosition(eePos);
-    eeNode.getWorldQuaternion(eeQuat);
+    // 충전건 팁 pose (PlugFrame)
+    const plugPos = new THREE.Vector3();
+    const plugQuat = new THREE.Quaternion();
+    plugFrame.getWorldPosition(plugPos);
+    plugFrame.getWorldQuaternion(plugQuat);
 
-    const eeEuler = new THREE.Euler();
-    eeEuler.setFromQuaternion(eeQuat, 'XYZ');
+    const plugEuler = new THREE.Euler();
+    plugEuler.setFromQuaternion(plugQuat, 'XYZ');
 
-    // 디버그 출력(잠깐만 보고 나중에 주석처리)
-    // console.log('[pose]',
-    //   'target=', portPos, portEuler,
-    //   'ee=', eePos, eeEuler
-    // );
+    // 충전건 팁 마커를 월드 위치에 맞춰 이동
+    if (plugMarker) {
+      plugMarker.position.copy(plugPos);
+    }
+
+    // 최근 위치/차이 기록 (HUD 표시용)
+    lastPlugPos = plugPos.clone();
+    lastPortPos = portPos.clone();
+    lastDiffPos = new THREE.Vector3().subVectors(portPos, plugPos);
 
     // RL state 후보 (dx,dy,dz,droll,dpitch,dyaw)
-    const dx = portPos.x - eePos.x;
-    const dy = portPos.y - eePos.y;
-    const dz = portPos.z - eePos.z;
-    const droll = portEuler.x - eeEuler.x;
-    const dpitch = portEuler.y - eeEuler.y;
-    const dyaw = portEuler.z - eeEuler.z;
+    const dx = portPos.x - plugPos.x;
+    const dy = portPos.y - plugPos.y;
+    const dz = portPos.z - plugPos.z;
+    const droll = portEuler.x - plugEuler.x;
+    const dpitch = portEuler.y - plugEuler.y;
+    const dyaw = portEuler.z - plugEuler.z;
 
-    // 이걸 나중에 Python 서버(/step)로 보낼 거야.
-    // fetch(...)로 보내고 action 받아서 robot.setJointAngle() 등으로 적용.
-    // 지금은 로컬에서 값만 잘 나오는지 보면 돼.
+    const state = [dx, dy, dz, droll, dpitch, dyaw];
+
+    const nowMs = performance.now();
+    if (nowMs - lastStepSent > STEP_INTERVAL_MS) {
+      lastStepSent = nowMs;
+      sendRlStep(state);
+    }
   }
+  if (lastPlugPos && lastPortPos && lastDiffPos) {
+    const p = lastPlugPos;
+    const q = lastPortPos;
+    const d = lastDiffPos;
+    hudText += ` | plug (${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`;
+    hudText += ` | port (${q.x.toFixed(3)}, ${q.y.toFixed(3)}, ${q.z.toFixed(3)})`;
+    hudText += ` | diff (${d.x.toFixed(3)}, ${d.y.toFixed(3)}, ${d.z.toFixed(3)})`;
+  }
+  hud.update(robot, window.VIEW_MODE, hudText);
   // --- 디버그 프러스텀 갱신 ---
   if (stereo) {
     // 로봇 IK/FK 반영 후 최신 월드행렬로 갱신
