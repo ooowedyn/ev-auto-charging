@@ -39,9 +39,23 @@ let portFrame = null;
 let lastPlugPos = null;
 let lastPortPos = null;
 let lastDiffPos = null;
+let lastDiffOri = null;
+let lastRlAction = null;
+let ikConverged = false;
+let lastOriErrDeg = null;
+
+// 간단한 모션 상태 머신: 'approach' → 'insert' → 'done'
+let motionPhase = 'approach';
+let insertTargetPos = null;
+
+let autoAlignedToPort = false;
+let armCamAlignedToPort = false;
+let prevIKOn = false;
 
 let lastStepSent = 0;
 const STEP_INTERVAL_MS = 100;
+
+const USE_RL = false; // 순수 IK + P제어 모드 (RL 비활성화)
 
 async function sendRlStep(state) {
   try {
@@ -51,8 +65,13 @@ async function sendRlStep(state) {
       body: JSON.stringify({ state }),
     });
     const data = await res.json();
-    console.log('[RL] action from server', data.action);
-    // 나중에 여기서 robot에 실제로 적용
+    const action = data.action || [];
+    console.log('[RL] action from server', action);
+
+    // RL 액션을 버퍼에 저장해 손목 RPY 제어에 활용
+    if (Array.isArray(action) && action.length > 0) {
+      lastRlAction = action;
+    }
   } catch (err) {
     console.error('[RL] step error', err);
   }
@@ -185,16 +204,22 @@ let VIEW_MODE = 'triple';
 window.VIEW_MODE = VIEW_MODE;
 let chargerPort = null; // target socket mesh (for RL target pose)
 
-// IK target
+// IK target (논리적인 목표만 사용, 메시는 숨김)
 const ikTarget = new THREE.Mesh(
   new THREE.SphereGeometry(0.05, 16, 16),
   new THREE.MeshStandardMaterial({ color: 0x57a6d9, metalness: 0.2, roughness: 0.6 })
 );
 ikTarget.position.set(0.4, 0.9, 0.3);
+ikTarget.visible = false; // 화면에는 보이지 않도록
 scene.add(ikTarget);
+
 const ikArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), ikTarget.position, 0.2);
+ikArrow.visible = false; // 디버그 화살표도 숨김
 scene.add(ikArrow);
+
 const input = new InputController(robot, ikTarget);
+// 초기에는 IK를 비활성화 상태로 두고, 스페이스로만 시작/정지
+input.IK_ON = false;
 
 // Load model(UR10)
 const loader = new GLTFLoader();
@@ -258,7 +283,7 @@ loader.load('/untitled.glb', (gltf) => {
 
   // 초기 자세 설정: 로봇팔을 충전구 쪽으로 약간 더 전방/전진하도록 조정
   const initialAngles = {
-    Motor1: RAD(20),   // 베이스를 약간 회전시켜 충전구 쪽을 향하게
+    Motor1: RAD(0),    // 베이스는 일단 정면, 이후 자동으로 충전구 쪽으로 회전
     Motor2: RAD(-55),  // 어깨: 앞으로 숙이기
     Motor3: RAD(75),   // 팔꿈치: 적당히 굽히기
     Motor4: RAD(-35),  // 손목1: 자세 보정
@@ -327,9 +352,9 @@ chargerLoader.load(
     chargerRoot.name = 'charger_root';
 
     // place the charger in the scene (tweak as needed)
-    chargerRoot.position.set(0.8, 0.9, 0.1);
+    chargerRoot.position.set(1.1, 0.9, 0.0);
     // Rotate the port so it faces the robot arm (tweak angles as needed)
-    chargerRoot.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+    chargerRoot.rotation.set(-Math.PI / 2, Math.PI/9, Math.PI / 2);
     chargerRoot.scale.set(1, 1, 1);
 
     // add to scene so it's visible
@@ -353,6 +378,11 @@ chargerLoader.load(
     // 연결 중심을 눈으로 보기 위한 축 표시
     const portAxes = new THREE.AxesHelper(0.1);
     portFrame.add(portAxes);
+    // PlugFrame이 이미 존재하는 경우에만 축 표시를 붙인다
+    if (plugFrame) {
+      const plugAxes = new THREE.AxesHelper(0.1);
+      plugFrame.add(plugAxes);
+    }
 
     // hide the cap if present (we only care about the socket)
     if (chargerCap) {
@@ -376,8 +406,49 @@ function tick() {
   const t = clock.getElapsedTime();
   controls.update();
 
+  // 스페이스(또는 InputController)로 IK_ON이 토글될 때 상태 변화 감지
+  const ikJustActivated = input.IK_ON && !prevIKOn;
+  const ikJustDeactivated = !input.IK_ON && prevIKOn;
+  prevIKOn = input.IK_ON;
+
+  if (ikJustActivated) {
+    // IK 시작: 모션 상태를 처음 단계로 리셋
+    motionPhase = 'approach';
+    insertTargetPos = null;
+    console.log('[IK] start (phase=approach)');
+  }
+  if (ikJustDeactivated) {
+    // IK 정지: 현재 포즈를 그대로 유지 (추가 제어 없음)
+    console.log('[IK] stop');
+  }
+
+  // 초기 한 번, 베이스를 충전구 쪽으로 자동 정렬
+  if (!autoAlignedToPort && portFrame && robot.joints['Motor1']) {
+    // 월드 좌표 갱신
+    scene.updateMatrixWorld(true);
+
+    // 베이스와 포트의 월드 위치
+    const basePos = new THREE.Vector3();
+    robot.joints['Motor1'].getWorldPosition(basePos);
+    const portPosForAlign = new THREE.Vector3();
+    portFrame.getWorldPosition(portPosForAlign);
+
+    // 바닥 평면(x-z)에서 베이스 -> 포트 방향의 yaw 각도 계산
+    const vx = portPosForAlign.x - basePos.x;
+    const vz = portPosForAlign.z - basePos.z;
+    // UR10 모델이 -Z 방향을 "앞"으로 보고 있다고 가정하여 부호 반전
+    const yaw = Math.atan2(-vx, -vz);
+
+    robot.setJointAngle('Motor1', yaw);
+    if (typeof robot.applyFK === 'function') {
+      robot.applyFK();
+    }
+    autoAlignedToPort = true;
+  }
+
   // IK (with joint speed limiting)
-  if (input.IK_ON && robot.root) {
+  // 삽입 완료(motionPhase === 'done') 전까지는 IK를 계속 사용
+  if (input.IK_ON && robot.root && motionPhase !== 'done') {
     // 1) 현재 관절 각도 백업
     const prevAngles = {};
     for (const name of JOINT_ORDER) {
@@ -390,10 +461,19 @@ function tick() {
 
     // 3) 프레임당 관절 최대 변화량 제한 (rad 단위)
     const MAX_STEP = 0.01; // 약 1.1도 정도
+    const WRIST_JOINTS = ['Motor5', 'Motor6', 'Motor7'];
 
     for (const name of JOINT_ORDER) {
       const prev = prevAngles[name];
       const cur = robot.angles[name] ?? prev;
+
+      // 손목 조인트(Motor5~7)는 IK의 영향을 받지 않게 하고,
+      // 아래 Wrist orientation controller에서만 제어되도록 한다.
+      if (WRIST_JOINTS.includes(name)) {
+        robot.setJointAngle(name, prev);
+        continue;
+      }
+
       let diff = cur - prev;
 
       if (diff > MAX_STEP) diff = MAX_STEP;
@@ -409,6 +489,41 @@ function tick() {
   for (const n in input.HELD_JOG)
     if (robot.joints[n])
       robot.setJointAngle(n, (robot.angles[n] ?? 0) + input.HELD_JOG[n] * input.JOG_STEP);
+
+  // Wrist orientation controller: dRPY 기반 P제어만 사용 (RL 비활성화)
+  // 위치 IK는 phase에 따라 제어되지만, 손목은 oriErr가 충분히 작아질 때까지 정렬을 시도
+  if (input.IK_ON && robot.root && lastDiffOri) {
+    const ORI_TOL_DEG = 20; // 최종적으로 허용할 단일 각도 오차 (deg)
+    if (lastOriErrDeg != null && lastOriErrDeg < ORI_TOL_DEG) {
+      // 이미 충분히 정렬되어 있으면 손목은 더 이상 움직이지 않는다.
+      // 여기서는 제어만 생략하고 tick()은 계속 진행
+    } else {
+      const { droll, dpitch, dyaw } = lastDiffOri;
+      const KP = 0.5;
+      const MAX_WRIST_STEP = 0.02; // rad/frame
+
+      // 작은 오차 영역에서는 손목을 더 이상 움직이지 않도록 dead-zone 추가
+      let eRoll = droll;
+      let ePitch = dpitch;
+      let eYaw = dyaw;
+      const ORI_DEAD = THREE.MathUtils.degToRad(10); // 10도 이하는 0으로 간주
+      if (Math.abs(eRoll) < ORI_DEAD) eRoll = 0;
+      if (Math.abs(ePitch) < ORI_DEAD) ePitch = 0;
+      if (Math.abs(eYaw) < ORI_DEAD) eYaw = 0;
+
+      const wristDeltas = {
+        Motor5: THREE.MathUtils.clamp(-KP * ePitch, -MAX_WRIST_STEP, MAX_WRIST_STEP),
+        Motor6: THREE.MathUtils.clamp(-KP * eYaw,   -MAX_WRIST_STEP, MAX_WRIST_STEP),
+        Motor7: THREE.MathUtils.clamp(-KP * eRoll,  -MAX_WRIST_STEP, MAX_WRIST_STEP),
+      };
+
+      for (const [jointName, delta] of Object.entries(wristDeltas)) {
+        if (!robot.joints[jointName]) continue;
+        const cur = robot.angles[jointName] ?? 0;
+        robot.setJointAngle(jointName, cur + delta);
+      }
+    }
+  }
 
   // HUD
   const now = performance.now();
@@ -436,6 +551,43 @@ function tick() {
     plugFrame.getWorldPosition(plugPos);
     plugFrame.getWorldQuaternion(plugQuat);
 
+    // 단일 오리엔테이션 오차:
+    // 플러그 삽입축(로컬 -Z)과 "플러그 팁에서 포트까지" 방향 벡터 사이 각도
+    const PLUG_AXIS = new THREE.Vector3(0, 0, -1); // PlugFrame의 -Z를 삽입축으로 가정
+    const plugForward = PLUG_AXIS.clone().applyQuaternion(plugQuat);
+    const toPort = new THREE.Vector3().subVectors(portPos, plugPos).normalize();
+    const oriErrRad = plugForward.angleTo(toPort);        // 0 ~ π (rad)
+    const oriErrDeg = THREE.MathUtils.radToDeg(oriErrRad); // 디버그/표시용 (deg)
+    // IK 타겟: Motor7 원점이 아닌, 플러그 팁(빨간 점)이 포트를 향하도록
+    // Motor7 월드 위치와 플러그 월드 위치 차이를 offset으로 구한 뒤,
+    // portPos - offset 위치로 Motor7을 보내면 플러그 팁이 portPos에 오도록 유도할 수 있다.
+    const eeNode = robot.joints['Motor7'];
+    if (eeNode) {
+      const eePos = new THREE.Vector3();
+      eeNode.getWorldPosition(eePos);
+      const offset = new THREE.Vector3().subVectors(plugPos, eePos);
+
+      // 접근 단계에서 플러그 팁(PlugFrame)이 포트 중심(portPos)에 오도록 하는 타겟
+      const approachTarget = new THREE.Vector3().subVectors(portPos, offset);
+
+      if (motionPhase === 'approach') {
+        // Phase 1: 포트 근처까지 접근 + 대략적인 축 정렬
+        ikTarget.position.copy(approachTarget);
+      } else if (motionPhase === 'insert') {
+        // Phase 2: 현재 정렬된 포즈를 유지한 채 삽입축 방향으로 직선 이동
+        if (!insertTargetPos) {
+          const INSERT_DEPTH = 0.08; // 삽입 깊이 ~8cm (필요시 조정)
+          const insertDir = new THREE.Vector3().subVectors(portPos, plugPos).normalize();
+          insertTargetPos = approachTarget.clone().add(insertDir.multiplyScalar(INSERT_DEPTH));
+          console.log('[Phase] insert target set', insertTargetPos);
+        }
+        // IK 타겟을 삽입 타겟 쪽으로 서서히 이동 (선형 보간)
+        ikTarget.position.lerp(insertTargetPos, 0.05);
+      } else if (motionPhase === 'done') {
+        // 완료 상태에서는 IK 타겟을 그대로 유지 (추가 제어 없음)
+      }
+    }
+
     const plugEuler = new THREE.Euler();
     plugEuler.setFromQuaternion(plugQuat, 'XYZ');
 
@@ -459,19 +611,60 @@ function tick() {
 
     const state = [dx, dy, dz, droll, dpitch, dyaw];
 
+    // 최근 자세 차이 기록 (HUD 표기용)
+    lastDiffOri = { droll, dpitch, dyaw };
+    lastOriErrDeg = oriErrDeg;
+
     const nowMs = performance.now();
-    if (nowMs - lastStepSent > STEP_INTERVAL_MS) {
-      lastStepSent = nowMs;
-      sendRlStep(state);
+    // RL 비활성화 모드에서는 state만 계산하고 사용하지 않는다.
+    // if (USE_RL && nowMs - lastStepSent > STEP_INTERVAL_MS) {
+    //   lastStepSent = nowMs;
+    //   sendRlStep(state);
+    // }
+
+    // 모션 상태 전환: 'approach' → 'insert' → 'done'
+    {
+      const POS_TOL = 0.02;           // 위치 오차 2cm 이하
+      const posErr = lastDiffPos.length();
+
+      if (motionPhase === 'approach') {
+        // 우선은 위치만 보고 삽입 단계로 전환하고, oriErr는 로그로만 확인
+        if (posErr < POS_TOL) {
+          console.log(
+            '[Phase] approach -> insert (pos-only)',
+            'posErr=', posErr.toFixed(4),
+            'oriErr=', lastOriErrDeg != null ? lastOriErrDeg.toFixed(1) : 'null'
+          );
+          motionPhase = 'insert';
+          insertTargetPos = null; // 다음 프레임에서 새로 삽입 타겟 계산
+        }
+      } else if (motionPhase === 'insert' && insertTargetPos) {
+        // 플러그 팁이 삽입 타겟 근처까지 오면 'done' 상태로 전환
+        const distToInsert = plugPos.distanceTo(insertTargetPos);
+        if (distToInsert < 0.005) { // 5mm 이내
+          console.log('[Phase] insert -> done', 'dist=', distToInsert.toFixed(4));
+          motionPhase = 'done';
+        }
+      }
     }
   }
   if (lastPlugPos && lastPortPos && lastDiffPos) {
     const p = lastPlugPos;
     const q = lastPortPos;
     const d = lastDiffPos;
-    hudText += ` | plug (${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`;
+    hudText += `  | plug (${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`;
     hudText += ` | port (${q.x.toFixed(3)}, ${q.y.toFixed(3)}, ${q.z.toFixed(3)})`;
     hudText += ` | diff (${d.x.toFixed(3)}, ${d.y.toFixed(3)}, ${d.z.toFixed(3)})`;
+    if (lastDiffOri) {
+      const { droll, dpitch, dyaw } = lastDiffOri;
+      const rDeg = THREE.MathUtils.radToDeg(droll);
+      const pDeg = THREE.MathUtils.radToDeg(dpitch);
+      const yDeg = THREE.MathUtils.radToDeg(dyaw);
+      hudText += ` | dRPY (${rDeg.toFixed(1)}, ${pDeg.toFixed(1)}, ${yDeg.toFixed(1)})`;
+    }
+    if (lastOriErrDeg != null) {
+      hudText += ` | oriErr ${lastOriErrDeg.toFixed(1)}°`;
+    }
   }
   hud.update(robot, window.VIEW_MODE, hudText);
   // --- 디버그 프러스텀 갱신 ---

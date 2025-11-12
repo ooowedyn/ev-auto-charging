@@ -57,11 +57,11 @@ class ArmReachEnv:
     def _get_state(self):
         """
         상태 벡터:
-        - 위치: 타겟(완전 삽입 위치) - EE 현재 위치
-        - 자세: 타겟 자세 - EE 현재 자세
+        - 위치: 포트 중심 - EE 현재 위치  (Three.js에서의 portPos - plugPos에 대응)
+        - 자세: 타겟(포트 기준) 자세 - EE 현재 자세
         즉, [dx, dy, dz, droll, dpitch, dyaw] 형태 (shape: (6,))
         """
-        diff_pos = self.target - self.ee_pos
+        diff_pos = self.port_pos - self.ee_pos
         diff_ori = self.target_ori - self.ee_ori
         state = np.concatenate([diff_pos, diff_ori]).astype(np.float32)
         return state

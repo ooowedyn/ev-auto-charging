@@ -15,8 +15,8 @@ if __name__ == "__main__":
     )
 
     # 학습
-    model.learn(total_timesteps=500_000)
-    model.save("src/RL/ppo_local_insertion")
+    model.learn(total_timesteps=200_000)
+    model.save("ppo_local_insertion")
 
 
     # 학습 끝난 정책을 한 번 rollout 해보는 것도 가능
