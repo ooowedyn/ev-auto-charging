@@ -1,0 +1,33 @@
+{
+  "pose-update": {
+    "description": "로봇 자세 업데이트(프론트→백엔드)",
+    "example": {
+      "type": "pose-update",
+      "data": {
+        "joints": [0, 10, 20, 30, 40, 50],
+        "eePose": { "x": 0.1, "y": 0.2, "z": 0.3, "roll": 0, "pitch": 1.57, "yaw": 0 }
+      }
+    }
+  },
+  "camera-frame": {
+    "description": "WebGL 캔버스 프레임 전송(프론트→백엔드)",
+    "example": {
+      "type": "camera-frame",
+      "data": { "imageBase64": "data:image/jpeg;base64,..." }
+    }
+  },
+  "request-frame": {
+    "description": "백엔드가 프론트에 프레임 요청(백엔드→프론트)",
+    "example": { "type": "request-frame", "data": { "fps": 5 } }
+  },
+  "rl-action": {
+    "description": "강화학습 액션 전달(백엔드→프론트)",
+    "example": {
+      "type": "rl-action",
+      "data": {
+        "mode": "wrist-rpy-delta",
+        "delta": { "droll": 0.01, "dpitch": -0.02, "dyaw": 0.015 }
+      }
+    }
+  }
+}
