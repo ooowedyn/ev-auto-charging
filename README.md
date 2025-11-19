@@ -29,5 +29,3 @@
 - 박세인
 - 정수연
 
-## 라이센스(License)
-> 본 프로젝트는 MIT License를 따름(This project is licensed under the terms of the MIT License)

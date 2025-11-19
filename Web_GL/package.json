@@ -1,0 +1,31 @@
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .js,.ts",
+    "format": "prettier --write .",
+    "lint:check": "eslint . --ext .js,.ts",
+    "format:check": "prettier --check .",
+    "prepare": "husky install"
+  },
+  "lint-staged": {
+    "*.{js,ts}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,html}": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=20.19 <21",
+    "npm": ">=10"
+  },
+  "devDependencies": {
+    "vite": "^7.1.12"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  }
+}
