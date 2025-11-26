@@ -1,5 +1,6 @@
 // backend/src/sockets/wsHandler.js
 import WebSocket, { WebSocketServer } from 'ws';
+import { processStereoFrame } from '../services/stereoVisionService.js';
 
 export function initWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -18,7 +19,7 @@ export function initWebSocket(server) {
     console.log(`🌐 Client connected: ${ip}`);
     ws.send(JSON.stringify({ type: 'hello', data: 'Connected to WebSocket Server' }));
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch {
         console.error('[WS] Invalid JSON'); return;
@@ -36,6 +37,18 @@ export function initWebSocket(server) {
           // 여기서는 로그만, 필요하면 파일 저장/비전파이프라인으로 전달
           console.log('[WS] Camera frame received');
           ws.send(JSON.stringify({ type: 'ack', data: { received: 'camera-frame' } }));
+          break;
+
+        case 'stereo-frame':
+          console.log('[WS] stereo frame received');
+          try {
+            const result = await processStereoFrame(data);
+            ws.send(JSON.stringify({ type: 'vision-result', data: result }));
+            broadcast({ type: 'vision-result', data: result }, ws);
+          } catch (err) {
+            console.error('[WS] stereo-frame error', err.message);
+            ws.send(JSON.stringify({ type: 'error', data: { reason: 'stereo-frame-failed', message: err.message } }));
+          }
           break;
 
         case 'action-cmd':

@@ -15,6 +15,7 @@ import { renderTriple } from './viz/renderTriple.js';
 import { RobotArm } from './core/robotArm.js';
 import { RobotController } from './core/robotController.js';
 import { HUD } from './ui/hud.js';
+import { VisionPanel } from './ui/visionPanel.js';
 import { InputController } from './ui/inputController.js';
 import { StereoRig } from './sensors/stereoRig.js';
 import { JOINT_ORDER } from './config/jointMeta.js';
@@ -31,12 +32,11 @@ socket.on('rl-action', (data) => {
   controller.applyRLAction(data);
 });
 
-// (선택) request-frame을 서버가 보낼 수도 있지만,
-// 보통은 프론트가 주도적으로 스트리밍 시작.
-socket.startFrameStreaming(
-  () => renderer.domElement.toDataURL('image/jpeg', 0.7),
-  5 // fps
-);
+socket.on('vision-result', (data) => {
+  console.log('[WS] vision-result received:', data);
+  visionPanel.update(data);
+  latestVisionText = formatVisionText(data);
+});
 
 // (선택) 주기적 포즈 전송 (0.5초 간격 예시)
 let _poseTimer = setInterval(() => {
@@ -70,9 +70,13 @@ let frustumRObj = null;
 
 const { scene, camera, renderer, controls, dir } = createScene();
 const hud = new HUD();
+const visionPanel = new VisionPanel();
 const robot = new RobotArm();
 const controller = new RobotController(robot);
 let stereo = null;
+let captureRenderer = null;
+let stereoStreamStarted = false;
+let latestVisionText = 'vision: waiting for results';
 window.VIEW_MODE = 'triple';
 
 // ✅ 키 입력 포커스 확보 (브라우저 단축키와 충돌 방지)
@@ -172,6 +176,7 @@ loader.load('/untitled.glb', (gltf) => {
 
     stereo = new StereoRig({ fov: 60, width: 640, height: 480, baseline: 0.06, near: 0.01, far: 20, zOffset: 0.0 });
     stereo.attachTo(tipMount);
+    startStereoStreamingIfReady();
 
     if (!plugMarker) {
       const markerGeom = new THREE.SphereGeometry(0.015, 16, 16);
@@ -250,6 +255,47 @@ function makeDebugFrustum(cam, color = 0xffa500) {
   return new THREE.LineSegments(geom, mat);
 }
 
+function ensureCaptureRenderer() {
+  if (!captureRenderer) {
+    captureRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    captureRenderer.setSize(stereo.width, stereo.height, false);
+    captureRenderer.setPixelRatio(1);
+    captureRenderer.setClearColor(0x111318, 1);
+  }
+}
+
+function captureStereoImages() {
+  if (!stereo) return null;
+  ensureCaptureRenderer();
+  captureRenderer.render(scene, stereo.camL);
+  const leftImageBase64 = captureRenderer.domElement.toDataURL('image/jpeg', 0.7);
+  captureRenderer.render(scene, stereo.camR);
+  const rightImageBase64 = captureRenderer.domElement.toDataURL('image/jpeg', 0.7);
+  return { leftImageBase64, rightImageBase64 };
+}
+
+function startStereoStreamingIfReady() {
+  if (stereo && !stereoStreamStarted) {
+    stereoStreamStarted = true;
+    socket.startStereoStreaming(() => captureStereoImages(), 2);
+  }
+}
+
+function formatVisionText(result) {
+  if (!result || !Array.isArray(result.boxes) || result.boxes.length === 0) {
+    return 'vision: no detections';
+  }
+  const lines = ['vision detections:'];
+  result.boxes.forEach((b, idx) => {
+    const [x1, y1, x2, y2] = b.bbox || [];
+    const depthStr = b.centerDepth == null ? '-' : b.centerDepth.toFixed(3);
+    lines.push(
+      `${idx + 1}. ${b.side || '?'} cls${b.class} bbox(${x1?.toFixed?.(1)},${y1?.toFixed?.(1)})->(${x2?.toFixed?.(1)},${y2?.toFixed?.(1)}) depth:${depthStr}`
+    );
+  });
+  return lines.join('\n');
+}
+
 // 메인 루프
 const clock = new THREE.Clock();
 let lastT = performance.now();
@@ -258,6 +304,8 @@ let fps = 0;
 function tick() {
   // ✅ IK 타깃/조인트 변화가 즉시 반영되도록 월드행렬 먼저 갱신
   scene.updateMatrixWorld(true);
+
+  startStereoStreamingIfReady();
 
   controls.update();
 
@@ -293,6 +341,7 @@ function tick() {
   const dt = (now - lastT) / 1000;
   lastT = now;
   fps = 0.9 * fps + 0.1 * (1 / dt);
+  hud.setExtra(latestVisionText);
   hud.update(robot, window.VIEW_MODE, `FPS ${fps.toFixed(0)} | IK:${input.IK_ON ? 'ON':'OFF'}`);
 
   // 렌더링

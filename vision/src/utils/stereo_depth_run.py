@@ -52,7 +52,7 @@ def generate_stereo_yaml_from_json(json_path, calib_path):
 
 
 
-def compute_depth_map(left_img_path, right_img_path, calib_file):
+def compute_depth_map(left_img_path, right_img_path, calib_file, depth_out_path=None):
     fs = cv2.FileStorage(calib_file, cv2.FILE_STORAGE_READ)
     K1 = fs.getNode("K1").mat()
     D1 = fs.getNode("D1").mat()
@@ -97,10 +97,12 @@ def compute_depth_map(left_img_path, right_img_path, calib_file):
     points_3D = cv2.reprojectImageTo3D(disp, Q)
     depth_map = points_3D[:, :, 2]
 
-    disp_vis = cv2.normalize(disp, None, 0, 255, cv2.NORM_MINMAX)
-    disp_vis = np.uint8(disp_vis)
-    cv2.imwrite("vision/Inference/image/depth_map/depth_map.png", disp_vis)
-    print("✅ depth_map.png saved")
+    if depth_out_path:
+        disp_vis = cv2.normalize(disp, None, 0, 255, cv2.NORM_MINMAX)
+        disp_vis = np.uint8(disp_vis)
+        os.makedirs(os.path.dirname(depth_out_path), exist_ok=True)
+        cv2.imwrite(depth_out_path, disp_vis)
+        print(f"✅ depth map preview saved to {depth_out_path}")
 
     return disp, depth_map, points_3D
 
@@ -116,7 +118,7 @@ if __name__ == "__main__":
         generate_stereo_yaml_from_json(json_file, calib_file)
 
     # ② Depth map 계산
-    disp, depth, pts3d = compute_depth_map(left_img, right_img, calib_file)
+    disp, depth, pts3d = compute_depth_map(left_img, right_img, calib_file, "vision/Inference/image/depth_map/depth_map.png")
 
     print("Depth map shape:", depth.shape)
     print("Sample depth value:", depth[depth.shape[0] // 2, depth.shape[1] // 2])

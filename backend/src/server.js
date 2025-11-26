@@ -1,8 +1,11 @@
 // backend/server.js
+import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import { initWebSocket } from './sockets/wsHandler.js';
+
+dotenv.config();
 
 const app = express();
 app.use(cors());

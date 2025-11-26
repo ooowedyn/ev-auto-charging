@@ -11,6 +11,9 @@ export class SocketClient {
     this._streamFps = 5;
     this._getFrame = null; // () => base64 string
 
+    this._stereoTimer = null;
+    this._getStereo = null; // () => {leftImageBase64,rightImageBase64}
+
     this.connect();
   }
 
@@ -82,6 +85,31 @@ export class SocketClient {
       clearInterval(this._streamTimer);
       this._streamTimer = null;
       console.log('[WS] frame streaming stopped');
+    }
+  }
+
+  startStereoStreaming(getStereoFrame, fps = 2) {
+    this._getStereo = getStereoFrame;
+    this.stopStereoStreaming();
+    const interval = 1000 / Math.max(1, fps);
+    this._stereoTimer = setInterval(() => {
+      try {
+        const frames = getStereoFrame ? getStereoFrame() : null;
+        if (frames?.leftImageBase64 && frames?.rightImageBase64) {
+          this.send('stereo-frame', { ...frames, ts: Date.now() });
+        }
+      } catch (e) {
+        console.error('[WS] stereo frame capture error', e);
+      }
+    }, interval);
+    console.log(`[WS] stereo streaming started @ ${fps} fps`);
+  }
+
+  stopStereoStreaming() {
+    if (this._stereoTimer) {
+      clearInterval(this._stereoTimer);
+      this._stereoTimer = null;
+      console.log('[WS] stereo streaming stopped');
     }
   }
 }
