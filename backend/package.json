@@ -1,5 +1,4 @@
 {
-<<<<<<< HEAD
   "name": "ev-auto-charging-backend",
   "version": "0.1.0",
   "private": true,
@@ -18,24 +17,5 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
-=======
-  "name": "backend",
-  "version": "1.0.0",
-  "type": "module",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "epress": "^0.0.1-security",
-    "express": "^5.1.0",
-    "node-fetch": "^3.3.2"
->>>>>>> f4de29c782f18ef2b7cde0d868e3821c5dfa534a
   }
 }

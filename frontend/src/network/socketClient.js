@@ -41,6 +41,11 @@ export class SocketClient {
         const fps = (msg.data && msg.data.fps) || this._streamFps;
         this.startFrameStreaming(this._getFrame, fps);
       }
+      // frame 저장 ACK 처리
+      if (msg.type === 'ack' && msg.data?.received === 'frame') {
+        const { path, filename } = msg.data;
+        console.log(`[WS] frame saved: ${filename || 'unknown'} (${path || ''})`);
+      }
     } catch (err) {
       console.error('[WS] Invalid message:', event.data);
     }

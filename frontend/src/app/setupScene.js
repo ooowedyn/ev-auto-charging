@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { createScene } from '../viz/createScene.js';
 import { RobotArm } from '../core/robotArm.js';
-import { StereoRig } from '../sensors/stereoRig.js';
+import { StereoRig } from '../viz/stereoRig.js';
 
 // 도(deg) → 라디안(rad)
 const RAD = (deg) => (deg * Math.PI) / 180;

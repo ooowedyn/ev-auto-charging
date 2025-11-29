@@ -3,16 +3,27 @@ set -e
 
 # ev-auto-charging 루트에서 실행한다고 가정
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
+CONDA_ENV="${CONDA_ENV:-RL}"
+# 데이터 저장 기본 경로 (vision/dataset/raw/images)
+DATASET_ROOT="${DATASET_ROOT:-$ROOT_DIR/vision/dataset/raw/images}"
+RUN_ID="${RUN_ID:-run_$(date +%Y%m%d%H%M%S)}"
 
 PIDS=()
 
 start_rl() {
   (
     cd "$ROOT_DIR/control"   # RL 디렉토리 이름이 control인 것을 가정
-    # conda 환경 활성화 (설치 경로는 본인 환경에 맞게 수정 가능)
-    source "/Users/yeonseongsmac/miniconda3/etc/profile.d/conda.sh"
+    # conda 환경 활성화 (설치 경로/환경명은 CONDA_SH, CONDA_ENV로 오버라이드 가능)
+    if [ -f "$CONDA_SH" ]; then
+      # shellcheck source=/dev/null
+      source "$CONDA_SH"
+    else
+      echo "conda.sh를 찾을 수 없습니다: $CONDA_SH"
+      exit 1
+    fi
 
-    conda activate RL
+    conda activate "$CONDA_ENV"
     python -m uvicorn main:app --reload --port 8000
   ) &
   PIDS+=($!)
@@ -21,14 +32,14 @@ start_rl() {
 start_backend() {
   (
     cd "$ROOT_DIR/backend"
-    npm run dev
+    DATASET_ROOT="$DATASET_ROOT" RUN_ID="$RUN_ID" npm run dev
   ) &
   PIDS+=($!)
 }
 
-start_web() {
+start_frontend() {
   (
-    cd "$ROOT_DIR/Web_GL"       # 폴더 이름이 webgl-sim이면 여기 수정
+    cd "$ROOT_DIR/frontend"
     npm run dev
   ) &
   PIDS+=($!)
@@ -55,8 +66,8 @@ echo "▶ Node 백엔드 시작 (3000)"
 start_backend
 sleep 1
 
-echo "▶ WebGL 프론트엔드 시작 (Vite:5173)"
-start_web
+echo "▶ Frontend (Vite:5173) 시작"
+start_frontend
 
 echo "------------------------------"
 echo "모든 dev 서버가 올라갔어 🚀"

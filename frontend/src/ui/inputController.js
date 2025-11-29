@@ -5,7 +5,7 @@
  *  - Space: IK ON/OFF 토글
  *  - M: TEST_M1_SPIN 토글
  *  - N: TEST_M2_SWEEP 토글
- *  - B/V/C/X: Motor3~6 TEST_SWEEP 토글
+ *  - B/V/X: Motor3/4/6 TEST_SWEEP 토글 (C는 Motor7 역방향 조그)
  *  - F: single ↔ stereo 뷰 토글
  *  - G: triple 뷰 고정
  *
@@ -35,8 +35,13 @@ export class InputController {
     this.TEST_M1_SPIN = false;
     this.TEST_M2_SWEEP = false;
     this.TEST_SWEEP = { Motor3: false, Motor4: false, Motor5: false, Motor6: false };
+    this.armControlEnabled = true;
 
     this._bind();
+  }
+  setArmControlEnabled(flag) {
+    this.armControlEnabled = !!flag;
+    if (!this.armControlEnabled) this.HELD_JOG = {};
   }
   _bind() {
     window.addEventListener('keydown', (e) => this._onKeyDown(e));
@@ -46,6 +51,11 @@ export class InputController {
     const step = 0.02,
       move = 0.03;
     if (e.code === 'Space') this.IK_ON = !this.IK_ON;
+    // 뷰 토글은 포커스 무관하게 허용
+    if (e.code === 'KeyF') window.VIEW_MODE = window.VIEW_MODE === 'single' ? 'stereo' : 'single';
+    if (e.code === 'KeyG') window.VIEW_MODE = 'triple';
+    // arm 제어 비활성 시 나머지 키 무시
+    if (!this.armControlEnabled) return;
     if (e.code === 'KeyM') this.TEST_M1_SPIN = !this.TEST_M1_SPIN;
     if (e.code === 'KeyN') this.TEST_M2_SWEEP = !this.TEST_M2_SWEEP;
 
@@ -77,7 +87,6 @@ export class InputController {
 
     if (e.code === 'KeyB') this.TEST_SWEEP.Motor3 = !this.TEST_SWEEP.Motor3;
     if (e.code === 'KeyV') this.TEST_SWEEP.Motor4 = !this.TEST_SWEEP.Motor4;
-    if (e.code === 'KeyC') this.TEST_SWEEP.Motor5 = !this.TEST_SWEEP.Motor5;
     if (e.code === 'KeyX') this.TEST_SWEEP.Motor6 = !this.TEST_SWEEP.Motor6;
 
     if (e.code === 'KeyW') this.ikTarget.position.z -= move;
@@ -97,12 +106,11 @@ export class InputController {
       KeyZ: 'Motor7',
     };
     if (JOG[e.code]) this.HELD_JOG[JOG[e.code]] = e.shiftKey ? -1 : 1;
+    if (e.code === 'KeyC') this.HELD_JOG['Motor7'] = -1; // Z가 정방향, C는 역방향
 
-    // view toggle (optional)
-    if (e.code === 'KeyF') window.VIEW_MODE = window.VIEW_MODE === 'single' ? 'stereo' : 'single';
-    if (e.code === 'KeyG') window.VIEW_MODE = 'triple';
   }
   _onKeyUp(e) {
+    if (!this.armControlEnabled) return;
     const JOG = {
       Digit1: 'Motor1',
       Digit2: 'Motor2',
@@ -114,5 +122,6 @@ export class InputController {
     };
     const name = JOG[e.code];
     if (name) delete this.HELD_JOG[name];
+    if (e.code === 'KeyC') delete this.HELD_JOG['Motor7'];
   }
 }

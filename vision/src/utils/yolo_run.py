@@ -49,11 +49,11 @@ class YoloDetector:
 
 if __name__ == "__main__":
 
-    WEIGHT_PATH = "vision/Inference/weights/best.pt"
-    LEFT_IMG = "vision/Inference/image/original_left_view/left_view.png"
-    RIGHT_IMG = "vision/Inference/image/original_right_view/right_view.png"
-    LEFT_OUT = "vision/Inference/image/detect_left_view"
-    RIGHT_OUT = "vision/Inference/image/detect_right_view"
+    WEIGHT_PATH = "vision/weights/best.pt"
+    LEFT_IMG = "vision/image/original_left_view/left_view.png"
+    RIGHT_IMG = "vision/image/original_right_view/right_view.png"
+    LEFT_OUT = "vision/image/detect_left_view"
+    RIGHT_OUT = "vision/image/detect_right_view"
 
     detector = YoloDetector(WEIGHT_PATH)
     result = detector.run_stereo_inference(LEFT_IMG, RIGHT_IMG, LEFT_OUT, RIGHT_OUT)
