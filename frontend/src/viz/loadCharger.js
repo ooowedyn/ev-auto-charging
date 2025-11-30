@@ -6,9 +6,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 export async function loadCharger(scene, options = {}) {
   const {
     path = '/port.glb',
-    position = new THREE.Vector3(1.1, 0.9, 0.0),
-    baseEuler = new THREE.Euler(Math.PI / 2, Math.PI / 9, Math.PI / 2, 'XYZ'),
-    tiltUp = Math.PI / 8, // 추가로 위로 기울이는 각도
+    position = new THREE.Vector3(0.58, 1.08, 0.0),
+    rotation = new THREE.Euler(Math.PI/2, Math.PI*1.88, Math.PI / 2, 'XYZ'),
     portName = 'Port',
     portFrameName = 'PortFrame',
     // 기본값을 “텍스처/재질 완전 덮어쓰기 + 노멀 재계산”으로 설정
@@ -30,11 +29,7 @@ export async function loadCharger(scene, options = {}) {
 
         // 배치/회전
         root.position.copy(position);
-        root.setRotationFromEuler(baseEuler);
-        if (typeof tiltUp === 'number' && tiltUp !== 0) {
-          const tiltQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -tiltUp);
-          root.quaternion.multiply(tiltQuat);
-        }
+        root.setRotationFromEuler(rotation);
         root.scale.set(1, 1, 1);
 
         // 재질 보정:

@@ -10,9 +10,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 export async function loadCar(scene, options = {}) {
   const {
     path = '/hyundai_ionic5.glb',
-    position = new THREE.Vector3(0.3, 0, 5),
+    position = new THREE.Vector3(0.3, 0, 4.88),
     rotation = new THREE.Euler(0, 0, 0, 'XYZ'),
-    scale = 0.0115, // 약 1/100 축소
+    scale = 0.0115, // 스케일
   } = options;
 
   const loader = new GLTFLoader();

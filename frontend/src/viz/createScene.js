@@ -62,7 +62,7 @@ scene.add(hemi);
 
 // 메인 키라이트 (기존 dir, 약간 따뜻한 흰색)
 const dir = new THREE.DirectionalLight(0xffffff, 1.4);
-dir.position.set(5, 8, 5);
+dir.position.set(-5, 8, 5); // 자동차가 서 있는 방향에 맞춰 역광 방지 (X를 음수로)
 dir.castShadow = true;
 dir.shadow.mapSize.set(2048, 2048);
 dir.shadow.camera.near = 0.5;

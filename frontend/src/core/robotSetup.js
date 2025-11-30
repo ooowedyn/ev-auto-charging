@@ -40,11 +40,12 @@ export function initRobotSystem({ scene, camera, dir }) {
   const robot = new RobotArm();
   const controller = new RobotController(robot);
 
-  // IK target
+  // IK target (노랑 삼각뿔)
   const ikTarget = new THREE.Mesh(
-    new THREE.SphereGeometry(0.03, 16, 16),
-    new THREE.MeshStandardMaterial({ color: 0x57a6d9, metalness: 0.2, roughness: 0.6 })
+    new THREE.ConeGeometry(0.03, 0.08, 4),
+    new THREE.MeshStandardMaterial({ color: 0xffcc00, metalness: 0.2, roughness: 0.5, transparent: true, opacity: 0.8 })
   );
+  ikTarget.rotation.x = -Math.PI / 2; // -Z 방향을 가리키도록
   ikTarget.position.set(0.4, 0.9, 0.3);
   ikTarget.visible = true;
   ikTarget.name = 'IK_TARGET';
@@ -233,6 +234,24 @@ export function initRobotSystem({ scene, camera, dir }) {
           plugFrame.name = 'PlugFrame';
           plugFrame.position.set(0.0, -0.10, -0.08);
           tipMount.add(plugFrame);
+
+          // Tip mount 시각화(초록 삼각뿔)
+          const tipViz = new THREE.Mesh(
+            new THREE.ConeGeometry(0.025, 0.06, 4),
+            new THREE.MeshStandardMaterial({ color: 0x00ff99, metalness: 0.2, roughness: 0.5, transparent: true, opacity: 0.5 })
+          );
+          tipViz.rotation.x = -Math.PI / 2;
+          tipViz.name = 'TipViz';
+          tipMount.add(tipViz);
+
+          // TCP 시각화(빨강 삼각뿔)
+          const tcpViz = new THREE.Mesh(
+            new THREE.ConeGeometry(0.02, 0.05, 4),
+            new THREE.MeshStandardMaterial({ color: 0xff3333, metalness: 0.2, roughness: 0.4, transparent: true, opacity: 0.8 })
+          );
+          tcpViz.rotation.x = -Math.PI / 2;
+          tcpViz.name = 'TCPViz';
+          plugFrame.add(tcpViz);
 
           stereo = new StereoRig({ fov: 60, width: 640, height: 480, baseline: 0.06, near: 0.01, far: 20, zOffset: 0.0 });
           stereo.attachTo(tipMount);

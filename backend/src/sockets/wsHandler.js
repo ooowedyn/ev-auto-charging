@@ -4,15 +4,16 @@ import fs from 'fs';
 import path from 'path';
 import { processStereoFrame } from '../services/stereoVisionService.js';
 
-// 기본 저장 경로: 프로젝트/vision/dataset/raw/images
+// 기본 저장 경로: 프로젝트/vision/dataset/raw/images (left/right 하위 폴더)
 // 필요 시 DATASET_ROOT 환경변수로 오버라이드
 const DATASET_ROOT =
   process.env.DATASET_ROOT ||
   path.resolve(process.cwd(), '..', 'vision', 'dataset', 'raw', 'images');
-const RUN_ID =
-  process.env.RUN_ID ||
-  `run_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}`; // run_YYYYMMDDHHMMSS
-const FRAME_DIR = path.join(DATASET_ROOT, RUN_ID);
+const LABEL_PATH =
+  process.env.LABEL_PATH ||
+  path.resolve(process.cwd(), '..', 'vision', 'dataset', 'raw', 'labels.csv');
+const FRAME_DIR_LEFT = path.join(DATASET_ROOT, 'left');
+const FRAME_DIR_RIGHT = path.join(DATASET_ROOT, 'right');
 
 async function ensureDir(dir) {
   await fs.promises.mkdir(dir, { recursive: true });
@@ -28,9 +29,23 @@ function encodeNumber(num, digits = 3) {
   return n.toFixed(digits).replace(/-/g, 'm').replace(/\./g, 'd');
 }
 
-function buildFilename(frameId, ts, relPose) {
-  const id = String(frameId ?? 0).padStart(6, '0');
-  const timestamp = String(ts ?? Date.now());
+function formatTsYYMMDDhhmmss(ts) {
+  // 단순히 제공된 ts를 날짜로 변환하거나, 문자열(12자리)이면 그대로 사용
+  if (typeof ts === 'string' && ts.length === 12) return ts;
+  const d = ts ? new Date(ts) : new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    String(d.getFullYear()).slice(-2) +
+    pad(d.getMonth() + 1) +
+    pad(d.getDate()) +
+    pad(d.getHours()) +
+    pad(d.getMinutes()) +
+    pad(d.getSeconds())
+  );
+}
+
+function buildFilename(side, dist, ts, relPose, visible) {
+  const timestamp = formatTsYYMMDDhhmmss(ts ?? Date.now());
   const { position = {}, quaternion = {} } = relPose || {};
   const p = [
     encodeNumber(position.x ?? position[0]),
@@ -43,21 +58,64 @@ function buildFilename(frameId, ts, relPose) {
     encodeNumber(quaternion.z ?? quaternion[2]),
     encodeNumber(quaternion.w ?? quaternion[3]),
   ];
-  return `${id}_${timestamp}_${p.join('_')}_${q.join('_')}.png`;
+  const distStr = encodeNumber(dist ?? 0);
+  const visStr = visible != null ? String(visible) : 'nan';
+  return `${side}_${distStr}_${timestamp}_${p.join('_')}_${q.join('_')}_${visStr}.png`;
+}
+
+async function appendCsvRow(rowArr) {
+  const header = [
+    'id','side',
+    'tx','ty','tz','qx','qy','qz','qw',
+    'j1','j2','j3','j4','j5','j6','j7',
+    'cam_tx','cam_ty','cam_tz','cam_qx','cam_qy','cam_qz','cam_qw',
+    'dist_tcp_socket','visible'
+  ];
+  const line = rowArr.join(',') + '\n';
+  const exists = fs.existsSync(LABEL_PATH);
+  await ensureDir(path.dirname(LABEL_PATH));
+  if (!exists) await fs.promises.writeFile(LABEL_PATH, header.join(',') + '\n');
+  await fs.promises.appendFile(LABEL_PATH, line);
 }
 
 async function saveFramePacket(packet = {}) {
-  const { image, tcpToSocketPose } = packet;
-  if (!image?.data) throw new Error('frame packet missing image.data');
+  const { image, tcpToSocketPose, dist, visible, joints = [], camPose = {}, timestamp } = packet;
+  if (!image?.left || !image?.right) throw new Error('frame packet missing image.left/right');
+  const ts = formatTsYYMMDDhhmmss(timestamp ?? Date.now());
 
-  const filename = buildFilename(packet.frameId, packet.timestamp, tcpToSocketPose);
-  const outDir = path.join(FRAME_DIR);
-  const outPath = path.join(outDir, filename);
+  await ensureDir(FRAME_DIR_LEFT);
+  await ensureDir(FRAME_DIR_RIGHT);
 
-  await ensureDir(outDir);
-  const buf = Buffer.from(stripBase64Prefix(image.data), 'base64');
-  await fs.promises.writeFile(outPath, buf);
-  return outPath;
+  const saveSide = async (side, img, camPoseSide, visibleVal) => {
+    const filename = buildFilename(side[0], dist, ts, tcpToSocketPose, visibleVal);
+    const outDir = side === 'left' ? FRAME_DIR_LEFT : FRAME_DIR_RIGHT;
+    const outPath = path.join(outDir, filename);
+    const buf = Buffer.from(stripBase64Prefix(img.data), 'base64');
+    await fs.promises.writeFile(outPath, buf);
+
+    const pose = tcpToSocketPose || {};
+    const pos = pose.position || {};
+    const quat = pose.quaternion || {};
+    const camPos = camPoseSide?.position || {};
+    const camQuat = camPoseSide?.quaternion || {};
+    const js = joints || [];
+    const row = [
+      ts,
+      side === 'left' ? 'l' : 'r',
+      pos.x ?? '', pos.y ?? '', pos.z ?? '',
+      quat.x ?? '', quat.y ?? '', quat.z ?? '', quat.w ?? '',
+      js[0] ?? '', js[1] ?? '', js[2] ?? '', js[3] ?? '', js[4] ?? '', js[5] ?? '', js[6] ?? '',
+      camPos.x ?? '', camPos.y ?? '', camPos.z ?? '',
+      camQuat.x ?? '', camQuat.y ?? '', camQuat.z ?? '', camQuat.w ?? '',
+      dist ?? '', visibleVal ?? '',
+    ];
+    await appendCsvRow(row);
+    return outPath;
+  };
+
+  const leftPath = await saveSide('left', image.left, camPose.left, visible?.left);
+  const rightPath = await saveSide('right', image.right, camPose.right, visible?.right);
+  return { leftPath, rightPath };
 }
 
 export function initWebSocket(server) {
@@ -119,10 +177,8 @@ export function initWebSocket(server) {
         case 'frame':
           try {
             const saved = await saveFramePacket(data);
-            const filename = path.basename(saved);
-            const dir = path.dirname(saved);
-            console.log(`[WS] frame saved: ${filename} -> ${dir}`);
-            ws.send(JSON.stringify({ type: 'ack', data: { received: 'frame', path: saved, filename, dir } }));
+            console.log(`[WS] frame saved:`, saved);
+            ws.send(JSON.stringify({ type: 'ack', data: { received: 'frame', paths: saved } }));
           } catch (err) {
             console.error('[WS] frame save error', err.message);
             ws.send(JSON.stringify({ type: 'error', data: { reason: 'frame-save-failed', message: err.message } }));
