@@ -82,9 +82,6 @@ window.addEventListener('wheel', (e) => {
 let plugMarker = null;
 let plugFrame = null;
 let portFrame = null;
-let chargerPortMesh = null;
-let plugCam = null;
-let plugCamRenderer = null;
 
 let frustumState = { left: null, right: null };
 
@@ -123,19 +120,16 @@ initKeyControls({
 });
 
 // 로봇 모델 로드
-robotLoadPromise.then(({ plugFrame: pf, stereo: st, plugMarker: pm, plugCam: pc }) => {
+robotLoadPromise.then(({ plugFrame: pf, stereo: st, plugMarker: pm }) => {
   plugFrame = pf;
   stereo = st;
   plugMarker = pm;
-  plugCam = pc || null;
-  if (plugCam) ensurePlugCamPreview();
 });
 
 // 충전 포트 로드 (모듈화)
 loadCharger(scene)
-  .then(({ portFrame: pf, chargerPort }) => {
+  .then(({ portFrame: pf }) => {
     portFrame = pf;
-    chargerPortMesh = chargerPort || null;
   })
   .catch((err) => console.error('Failed to load charger model:', err));
 
@@ -148,8 +142,8 @@ function captureAndSendFrame() {
     console.warn('[capture] plugFrame/portFrame not ready');
     return;
   }
-  if (!stereo || !stereo.camL || !stereo.camR) {
-    console.warn('[capture] stereo cams not ready');
+  if (!stereo || !stereo.camL) {
+    console.warn('[capture] stereo camL not ready');
     return;
   }
   // 디버그 시각화 요소 일시 숨김 (축/프러스텀 등)
@@ -162,16 +156,11 @@ function captureAndSendFrame() {
   };
   hideObj(frustumState.left);
   hideObj(frustumState.right);
+  const tcp = getPose(plugFrame);
+  const socketPose = getPose(portFrame);
+  const tcpToSocket = computeRelativePose(tcp.matrix, socketPose.matrix);
 
-  const tcpPoseWorld = getPose(plugFrame);
-  const socketPoseWorld = getPose(portFrame);
-  const tcpToSocket = computeRelativePose(tcpPoseWorld.matrix, socketPoseWorld.matrix);
-  const dist = tcpToSocket.position ? Math.hypot(tcpToSocket.position.x, tcpToSocket.position.y, tcpToSocket.position.z) : null;
-  const targetMesh = chargerPortMesh || portFrame;
-  const visibleLeft = isInViewFrustum(stereo.camL, targetMesh) ? 1 : 0;
-  const visibleRight = isInViewFrustum(stereo.camR, targetMesh) ? 1 : 0;
-
-  // --- 스테레오 캡처 (640x480) ---
+  // --- camL 전용 640x480 캡처 ---
   const prevSize = new THREE.Vector2();
   renderer.getSize(prevSize);
   const prevRatio = renderer.getPixelRatio();
@@ -180,16 +169,10 @@ function captureAndSendFrame() {
   const CAP_H = 480;
   renderer.setPixelRatio(1);
   renderer.setSize(CAP_W, CAP_H, false);
+  renderer.render(scene, stereo.camL);
 
-  const captureCam = (cam) => {
-    renderer.render(scene, cam);
-    const dataUrl = renderer.domElement.toDataURL('image/png');
-    return dataUrl.replace(/^data:image\/png;base64,/, '');
-  };
-
-  const leftBase64 = captureCam(stereo.camL);
-  const rightBase64 = captureCam(stereo.camR);
-
+  const dataUrl = renderer.domElement.toDataURL('image/png');
+  const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
   // 원래 뷰 복원
   renderer.setPixelRatio(prevRatio);
   renderer.setSize(prevSize.x, prevSize.y, false);
@@ -199,24 +182,15 @@ function captureAndSendFrame() {
   const packet = {
     frameId: Date.now(),
     timestamp: Date.now(),
-    image: {
-      left: { mime: 'image/png', encoding: 'base64', width: CAP_W, height: CAP_H, data: leftBase64 },
-      right: { mime: 'image/png', encoding: 'base64', width: CAP_W, height: CAP_H, data: rightBase64 },
-    },
-    tcpPoseWorld: matrixToPose(tcpPoseWorld.matrix),
-    socketPoseWorld: matrixToPose(socketPoseWorld.matrix),
+    image: { mime: 'image/png', encoding: 'base64', width: CAP_W, height: CAP_H, data: base64 },
+    tcpPoseWorld: matrixToPose(tcp.matrix),
+    socketPoseWorld: matrixToPose(socketPose.matrix),
     tcpToSocketPose: tcpToSocket,
-    camPose: {
-      left: matrixToPose(stereo.camL.matrixWorld),
-      right: matrixToPose(stereo.camR.matrixWorld),
-    },
-    visible: { left: visibleLeft, right: visibleRight },
-    dist,
     joints: JOINT_ORDER.map((n) => robot.angles[n] ?? 0),
-    meta: { cameraId: 'stereo', sceneId: 'default_scene' },
+    meta: { cameraId: 'stereo_camL', sceneId: 'default_scene' },
   };
   socket.send('frame', packet);
-  console.log('[capture] frame packet sent (stereo)');
+  console.log('[capture] frame packet sent');
 }
 
 // 디버그 프러스텀 생성 함수
@@ -224,32 +198,6 @@ function captureAndSendFrame() {
 const clock = new THREE.Clock();
 let lastT = performance.now();
 let fps = 0;
-const frustumHelper = {
-  frustum: new THREE.Frustum(),
-  proj: new THREE.Matrix4(),
-  box: new THREE.Box3(),
-};
-
-function isInViewFrustum(cam, obj) {
-  if (!cam || !obj) return false;
-  cam.updateMatrixWorld(true);
-  cam.updateProjectionMatrix();
-  frustumHelper.proj.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
-  frustumHelper.frustum.setFromProjectionMatrix(frustumHelper.proj);
-  frustumHelper.box.setFromObject(obj);
-  return frustumHelper.frustum.intersectsBox(frustumHelper.box);
-}
-
-function ensurePlugCamPreview() {
-  if (plugCamRenderer) return;
-  plugCamRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  plugCamRenderer.setPixelRatio(1);
-  plugCamRenderer.setSize(240, 180, false);
-  const el = plugCamRenderer.domElement;
-  el.style.cssText =
-    'position:fixed;bottom:10px;left:50%;transform:translateX(-50%);width:240px;height:180px;border:1px solid #3a3f4b;background:#000;z-index:12;pointer-events:none;';
-  document.body.appendChild(el);
-}
 
 function tick() {
   // ✅ IK 타깃/조인트 변화가 즉시 반영되도록 월드행렬 먼저 갱신
@@ -295,9 +243,6 @@ function tick() {
     socketPose = matrixToPose(portFrame.matrixWorld);
     const relMat = plugFrame.matrixWorld.clone().invert().multiply(portFrame.matrixWorld);
     relPose = matrixToPose(relMat);
-  }
-  if (plugCam && plugCamRenderer) {
-    plugCamRenderer.render(scene, plugCam);
   }
   hud.updateWithPoses({
     robot,
