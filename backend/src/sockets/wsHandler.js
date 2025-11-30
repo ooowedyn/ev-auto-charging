@@ -60,7 +60,8 @@ function buildFilename(side, dist, ts, relPose, visible) {
   ];
   const distStr = encodeNumber(dist ?? 0);
   const visStr = visible != null ? String(visible) : 'nan';
-  return `${side}_${distStr}_${timestamp}_${p.join('_')}_${q.join('_')}_${visStr}.png`;
+  // order: side, timestamp, pose, distance, visible
+  return `${side}_${timestamp}_${p.join('_')}_${q.join('_')}_${distStr}_${visStr}.png`;
 }
 
 async function appendCsvRow(rowArr) {
@@ -69,6 +70,8 @@ async function appendCsvRow(rowArr) {
     'tx','ty','tz','qx','qy','qz','qw',
     'j1','j2','j3','j4','j5','j6','j7',
     'cam_tx','cam_ty','cam_tz','cam_qx','cam_qy','cam_qz','cam_qw',
+    'tcp_w_tx','tcp_w_ty','tcp_w_tz','tcp_w_qx','tcp_w_qy','tcp_w_qz','tcp_w_qw',
+    'socket_w_tx','socket_w_ty','socket_w_tz','socket_w_qx','socket_w_qy','socket_w_qz','socket_w_qw',
     'dist_tcp_socket','visible'
   ];
   const line = rowArr.join(',') + '\n';
@@ -79,7 +82,17 @@ async function appendCsvRow(rowArr) {
 }
 
 async function saveFramePacket(packet = {}) {
-  const { image, tcpToSocketPose, dist, visible, joints = [], camPose = {}, timestamp } = packet;
+  const {
+    image,
+    tcpToSocketPose,
+    tcpPoseWorld,
+    socketPoseWorld,
+    dist,
+    visible,
+    joints = [],
+    camPose = {},
+    timestamp,
+  } = packet;
   if (!image?.left || !image?.right) throw new Error('frame packet missing image.left/right');
   const ts = formatTsYYMMDDhhmmss(timestamp ?? Date.now());
 
@@ -98,6 +111,10 @@ async function saveFramePacket(packet = {}) {
     const quat = pose.quaternion || {};
     const camPos = camPoseSide?.position || {};
     const camQuat = camPoseSide?.quaternion || {};
+    const tcpWPos = tcpPoseWorld?.position || {};
+    const tcpWQuat = tcpPoseWorld?.quaternion || {};
+    const socketWPos = socketPoseWorld?.position || {};
+    const socketWQuat = socketPoseWorld?.quaternion || {};
     const js = joints || [];
     const row = [
       ts,
@@ -107,6 +124,10 @@ async function saveFramePacket(packet = {}) {
       js[0] ?? '', js[1] ?? '', js[2] ?? '', js[3] ?? '', js[4] ?? '', js[5] ?? '', js[6] ?? '',
       camPos.x ?? '', camPos.y ?? '', camPos.z ?? '',
       camQuat.x ?? '', camQuat.y ?? '', camQuat.z ?? '', camQuat.w ?? '',
+      tcpWPos.x ?? '', tcpWPos.y ?? '', tcpWPos.z ?? '',
+      tcpWQuat.x ?? '', tcpWQuat.y ?? '', tcpWQuat.z ?? '', tcpWQuat.w ?? '',
+      socketWPos.x ?? '', socketWPos.y ?? '', socketWPos.z ?? '',
+      socketWQuat.x ?? '', socketWQuat.y ?? '', socketWQuat.z ?? '', socketWQuat.w ?? '',
       dist ?? '', visibleVal ?? '',
     ];
     await appendCsvRow(row);

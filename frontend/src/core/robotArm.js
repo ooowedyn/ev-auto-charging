@@ -48,6 +48,7 @@ export class RobotArm {
     this.angles = {}; // name -> radians
     this._defaults = {}; // name -> Quaternion
     this.root = null; // GLTF root
+    this.eeOverride = null; // optional custom end-effector node
   }
 
   attach(root) {
@@ -84,7 +85,12 @@ export class RobotArm {
     for (const n of this.order) this.setJointAngle(n, this.angles[n] ?? 0);
   }
 
+  setEndEffector(node) {
+    this.eeOverride = node || null;
+  }
+
   getEndEffector() {
+    if (this.eeOverride) return this.eeOverride;
     for (let i = this.order.length - 1; i >= 0; --i) {
       const n = this.order[i];
       if (this.joints[n]) return this.joints[n];

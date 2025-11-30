@@ -222,6 +222,7 @@ export function initRobotSystem({ scene, camera, dir }) {
         let plugFrame = null;
         let plugMarker = null;
         let stereo = null;
+        let plugCam = null;
         const eeNode = robot.joints['Motor7'];
         if (eeNode) {
           const tipMount = new THREE.Object3D();
@@ -234,6 +235,8 @@ export function initRobotSystem({ scene, camera, dir }) {
           plugFrame.name = 'PlugFrame';
           plugFrame.position.set(0.0, -0.10, -0.08);
           tipMount.add(plugFrame);
+          // IK end-effector를 플러그 프레임으로 설정하여 IK 타깃이 빨간 삼각뿔 위치에 정렬되도록
+          robot.setEndEffector(plugFrame);
 
           // Tip mount 시각화(초록 삼각뿔)
           const tipViz = new THREE.Mesh(
@@ -272,9 +275,15 @@ export function initRobotSystem({ scene, camera, dir }) {
           plugMarker = new THREE.Mesh(markerGeom, markerMat);
           plugMarker.name = 'PlugMarker';
           scene.add(plugMarker);
+
+          // EE 전용 카메라 (plugFrame 기준, -Z를 바라보는 보조 시야)
+          plugCam = new THREE.PerspectiveCamera(70, 4 / 3, 0.01, 10);
+          plugCam.position.set(0, 0, 0.05); // 플러그 프레임 뒤쪽에서 바라보게 오프셋
+          plugCam.lookAt(0, 0, -1);
+          plugFrame.add(plugCam);
         }
 
-        resolve({ plugFrame, stereo, plugMarker });
+        resolve({ plugFrame, stereo, plugMarker, plugCam });
       },
       undefined,
       (err) => reject(err)

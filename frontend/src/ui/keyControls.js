@@ -14,7 +14,7 @@ export function initKeyControls({
   ];
 
   const onKeyDown = (e) => {
-    if (blockKeys.includes(e.code)) e.preventDefault();
+    if (blockKeys.includes(e.code) || e.code === 'Tab') e.preventDefault();
 
     if (e.code === 'KeyP') {
       const joints = Object.values(robot.angles);
@@ -25,6 +25,8 @@ export function initKeyControls({
     if (e.code === 'Tab') {
       const next = getFocus() === 'USER' ? 'ARM_CAM' : 'USER';
       setFocus(next);
+      // Tab 기본 포커스 이동 방지 (canvas 포커스 유지)
+      e.preventDefault();
     }
     if (getFocus() === 'USER') {
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE'].includes(e.code)) camMoveKeys[e.code] = true;
