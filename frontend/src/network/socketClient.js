@@ -43,8 +43,11 @@ export class SocketClient {
       }
       // frame 저장 ACK 처리
       if (msg.type === 'ack' && msg.data?.received === 'frame') {
-        const { path, filename } = msg.data;
-        console.log(`[WS] frame saved: ${filename || 'unknown'} (${path || ''})`);
+        const paths = msg.data?.paths || {};
+        const left = paths.leftPath || '';
+        const right = paths.rightPath || '';
+        const fallback = msg.data?.path || '';
+        console.log(`[WS] frame saved: L=${left || 'unknown'} R=${right || 'unknown'} ${fallback && `(${fallback})`}`);
       }
     } catch (err) {
       console.error('[WS] Invalid message:', event.data);

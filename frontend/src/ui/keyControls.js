@@ -2,6 +2,7 @@
 export function initKeyControls({
   socket,
   captureAndSendFrame,
+  sendDetection,
   getFocus,
   setFocus,
   camMoveKeys,
@@ -10,7 +11,7 @@ export function initKeyControls({
   const blockKeys = [
     'KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE',
     'Space','Digit1','Digit2','Digit3','Digit4','Digit5','Digit6',
-    'KeyZ','KeyF','KeyG','KeyU','KeyI','KeyO','Digit8','Digit9','Digit0'
+    'KeyZ','KeyF','KeyG','KeyU','KeyI','KeyO','Digit8','Digit9','Digit0','KeyK'
   ];
 
   const onKeyDown = (e) => {
@@ -21,7 +22,8 @@ export function initKeyControls({
       socket.send('pose-update', { joints });
       console.log('[WS] pose sent');
     }
-    if (e.code === 'KeyL') captureAndSendFrame();
+    if (e.code === 'KeyL' && captureAndSendFrame) captureAndSendFrame();
+    if (e.code === 'KeyK' && sendDetection) sendDetection();
     if (e.code === 'Tab') {
       const next = getFocus() === 'USER' ? 'ARM_CAM' : 'USER';
       setFocus(next);

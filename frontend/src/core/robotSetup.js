@@ -81,8 +81,8 @@ export function initRobotSystem({ scene, camera, dir }) {
   function createJointPanel() {
     const panel = document.createElement('div');
     panel.style.cssText =
-      'position:fixed;top:10px;right:10px;background:#0b0d12cc;color:#e5eefc;padding:8px;border-radius:6px;font:12px monospace;z-index:20;max-height:60vh;overflow:auto;';
-    panel.innerHTML = '<div style="margin-bottom:4px;font-weight:bold;">Joint Control</div>';
+      'position:fixed;bottom:10px;left:50%;transform:translateX(-50%);background:#0b0d12cc;color:#e5eefc;padding:8px;border-radius:6px;font:12px monospace;z-index:20;max-height:40vh;overflow:auto;';
+    panel.innerHTML = '<div style="margin-bottom:4px;font-weight:bold;text-align:center;">Joint Control</div>';
     const toDeg = (r) => (((r || 0) * 180) / Math.PI).toFixed(0);
     const toRad = (d) => (d * Math.PI) / 180;
     JOINT_ORDER.forEach((name) => {

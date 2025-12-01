@@ -16,4 +16,5 @@ app.get('/health', (_, res) => res.json({ status: 'ok' }));
 const server = http.createServer(app);
 initWebSocket(server);
 
-server.listen(3000, () => console.log('🚀 Server running on http://localhost:3000'));
+const PORT = process.env.PORT || 3101;
+server.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
