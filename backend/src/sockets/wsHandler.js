@@ -31,17 +31,20 @@ function encodeNumber(num, digits = 3) {
 }
 
 function formatTsYYMMDDhhmmss(ts) {
-  // 단순히 제공된 ts를 날짜로 변환하거나, 문자열(12자리)이면 그대로 사용
-  if (typeof ts === 'string' && ts.length === 12) return ts;
+  // yymmdd_hhmmssSSS (밀리초까지 포함)
+  if (typeof ts === 'string' && ts.length >= 15) return ts;
   const d = ts ? new Date(ts) : new Date();
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const pad3 = (n) => String(n).padStart(3, '0');
   return (
     String(d.getFullYear()).slice(-2) +
-    pad(d.getMonth() + 1) +
-    pad(d.getDate()) +
-    pad(d.getHours()) +
-    pad(d.getMinutes()) +
-    pad(d.getSeconds())
+    pad2(d.getMonth() + 1) +
+    pad2(d.getDate()) +
+    '_' +
+    pad2(d.getHours()) +
+    pad2(d.getMinutes()) +
+    pad2(d.getSeconds()) +
+    pad3(d.getMilliseconds())
   );
 }
 
