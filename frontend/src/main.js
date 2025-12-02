@@ -21,6 +21,7 @@ import { refreshFrustums } from './viz/debugViz.js';
 import { loadCar } from './viz/loadCar.js';
 import { JOINT_ORDER } from './config/jointMeta.js';
 import { getPose, matrixToPose, computeRelativePose } from './utils/poseUtils.js';
+import { getIntrinsicsFromCamera } from './utils/coords.js';
 
 // 소켓 생성 (그냥 전역 노출함)
 const socket = new SocketClient('ws://localhost:3101');
@@ -130,6 +131,7 @@ if (canvas) {
 initKeyControls({
   socket,
   captureAndSendFrame,
+  captureAndSendMainCamFrame,
   sendDetection: toggleDetectStreaming,
   getFocus: () => controlFocus,
   setFocus,
@@ -174,6 +176,7 @@ function captureAndSendFrame() {
   const CAP_W = 640;
   const CAP_H = 480;
   const packet = {
+    type: 'frame',
     frameId: Date.now(),
     timestamp: Date.now(),
     image: {
@@ -187,11 +190,57 @@ function captureAndSendFrame() {
     visible: { left: visibleLeft, right: visibleRight },
     dist,
     joints: JOINT_ORDER.map((n) => robot.angles[n] ?? 0),
-    meta: { cameraId: 'stereo', sceneId: 'default_scene' },
+    meta: {
+      cameraId: 'stereo',
+      sceneId: 'default_scene',
+      intrinsics: getIntrinsicsFromCamera(stereo.camL, CAP_W, CAP_H),
+    },
   };
   socket.send('frame', packet);
   console.log('[capture] frame packet sent (stereo)');
   lastKeyAction = 'L: frame saved & sent';
+}
+
+// 메인 카메라 캡처 (M 키)
+function captureAndSendMainCamFrame() {
+  const data = captureMainCamData();
+  if (!data) return;
+  const {
+    mainBase64,
+    tcpPoseWorld,
+    camPoseWorld,
+    socketPoseWorld,
+    camToSocket,
+    dist,
+    visibleMain,
+  } = data;
+
+  const CAP_W = 640;
+  const CAP_H = 480;
+  const packet = {
+    type: 'frame',
+    frameId: Date.now(),
+    timestamp: Date.now(),
+    image: {
+      main: { mime: 'image/png', encoding: 'base64', width: CAP_W, height: CAP_H, data: mainBase64 },
+    },
+    tcpPoseWorld: matrixToPose(tcpPoseWorld.matrix),
+    camPoseWorld: matrixToPose(camPoseWorld.matrix),
+    socketPoseWorld: matrixToPose(socketPoseWorld.matrix),
+    camPose: { main: matrixToPose(camPoseWorld.matrix) },
+    camToSocketPose: camToSocket,
+    visible: { main: visibleMain },
+    dist,
+    joints: JOINT_ORDER.map((n) => robot.angles[n] ?? 0),
+    meta: {
+      cameraId: 'main',
+      sceneId: 'default_scene',
+      intrinsics: getIntrinsicsFromCamera(camera, CAP_W, CAP_H),
+    },
+  };
+  socket.send('frame', packet);
+  console.log('[capture] frame packet sent (main cam)');
+  lastKeyAction = 'M: main cam saved & sent';
 }
 
 // 공용 스테레오 캡처 (L/R 및 포즈/가시성 포함)
@@ -260,6 +309,59 @@ function captureStereoData() {
       left: matrixToPose(stereo.camL.matrixWorld),
       right: matrixToPose(stereo.camR.matrixWorld),
     },
+  };
+}
+
+// 메인 카메라 캡처 데이터
+function captureMainCamData() {
+  if (!plugFrame || !portFrame) {
+    console.warn('[capture] plugFrame/portFrame not ready');
+    return null;
+  }
+  // 디버그 시각화 숨김 (프러스텀 등)
+  const prevStates = [];
+  const hideObj = (obj) => {
+    if (obj) {
+      prevStates.push({ obj, vis: obj.visible });
+      obj.visible = false;
+    }
+  };
+  hideObj(frustumState.left);
+  hideObj(frustumState.right);
+
+  const tcpPoseWorld = getPose(plugFrame);
+  const camPoseWorld = getPose(camera);
+  const socketPoseWorld = getPose(portFrame);
+  const camToSocket = computeRelativePose(camPoseWorld.matrix, socketPoseWorld.matrix);
+  const dist = camToSocket.position ? Math.hypot(camToSocket.position.x, camToSocket.position.y, camToSocket.position.z) : null;
+  const targetMesh = chargerPortMesh || portFrame;
+  const visibleMain = isInViewFrustum(camera, targetMesh) ? 1 : 0;
+
+  // 캡처
+  const prevSize = new THREE.Vector2();
+  renderer.getSize(prevSize);
+  const prevRatio = renderer.getPixelRatio();
+
+  const CAP_W = 640;
+  const CAP_H = 480;
+  renderer.setPixelRatio(1);
+  renderer.setSize(CAP_W, CAP_H, false);
+  renderer.render(scene, camera);
+  const dataUrl = renderer.domElement.toDataURL('image/png');
+  const mainBase64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+  // 원래 뷰 복원
+  renderer.setPixelRatio(prevRatio);
+  renderer.setSize(prevSize.x, prevSize.y, false);
+  prevStates.forEach(({ obj, vis }) => { obj.visible = vis; });
+
+  return {
+    mainBase64,
+    tcpPoseWorld,
+    camPoseWorld,
+    socketPoseWorld,
+    camToSocket,
+    dist,
+    visibleMain,
   };
 }
 
@@ -367,11 +469,20 @@ function tick() {
   lastT = now;
   fps = 0.9 * fps + 0.1 * (1 / dt);
   let tcpPose = null, socketPose = null, relPose = null;
+  let camRelPose = null, distCam = null, visMain = null;
   if (plugFrame && portFrame) {
     tcpPose = matrixToPose(plugFrame.matrixWorld);
     socketPose = matrixToPose(portFrame.matrixWorld);
     const relMat = plugFrame.matrixWorld.clone().invert().multiply(portFrame.matrixWorld);
     relPose = matrixToPose(relMat);
+
+    const camToSocket = computeRelativePose(camera.matrixWorld, portFrame.matrixWorld);
+    camRelPose = camToSocket;
+    const p = camToSocket.position || {};
+    distCam = Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)
+      ? Math.hypot(p.x, p.y, p.z)
+      : null;
+    visMain = isInViewFrustum(camera, portFrame) ? 1 : 0;
   }
   if (lastKeyAction) hud.setExtra(lastKeyAction);
   hud.updateWithPoses({
@@ -382,6 +493,9 @@ function tick() {
     tcpPose,
     socketPose,
     relPose,
+    camRelPose,
+    distCam,
+    visibleMain: visMain,
   });
 
   // 렌더링
@@ -406,11 +520,15 @@ function tick() {
 
     let vpX = 0, vpY = 0, vpW = w, vpH = h;
     if (window.VIEW_MODE === 'triple') {
+      // 좌: 메인, 우: 상단 L / 하단 R
       const leftW = Math.floor(w * 0.6);
       const rightW = w - leftW;
       const halfH = Math.floor(h / 2);
-      // three.js viewport origin이 좌하단이므로, 2D 캔버스(좌상단 원점)에서는 y=0이 상단
-      vpX = leftW; vpY = 0; vpW = rightW; vpH = halfH; // 오른쪽 상단 camL
+      // three.js viewport origin이 좌하단 → 2D 캔버스 좌상단으로 변환
+      vpX = leftW;
+      vpY = 0;           // 오른쪽 상단이 camL
+      vpW = rightW;
+      vpH = halfH;
     } else if (window.VIEW_MODE === 'stereo') {
       vpX = 0; vpY = 0; vpW = Math.floor(w / 2); vpH = h;
     } else {

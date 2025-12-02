@@ -405,17 +405,17 @@ def solve_pnp_from_files(ellipse_json_path: str,
 # ==============================
 if __name__ == "__main__":
     # ---- 경로 설정 (필요에 맞게 수정) ----
-    LEFT_ORI   = "vision/Inference/image/original_left_view/left_view.png"
-    RIGHT_ORI  = "vision/Inference/image/original_right_view/right_view.png"
+    LEFT_ORI   = "vision/image/original_left_view/left_view.png"
+    RIGHT_ORI  = "vision/image/original_right_view/right_view.png"
 
-    LEFT_DIR   = "vision/Inference/image/detect_left_view"
-    RIGHT_DIR  = "vision/Inference/image/detect_right_view"
+    LEFT_DIR   = "vision/image/detect_left_view"
+    RIGHT_DIR  = "vision/image/detect_right_view"
 
     LEFT_BBOX  = os.path.join(LEFT_DIR,  "left_view_bbox.json")
     RIGHT_BBOX = os.path.join(RIGHT_DIR, "right_view_bbox.json")
 
     # (선택) CAD 기준점 JSON 경로 (없으면 내부 Fallback 사용)
-    OBJPOINTS_JSON = "ccs_type1_reference.json"  # 없으면 자동 Fallback
+    OBJPOINTS_JSON = "vision/config/ccs_type1_reference.json"  # 없으면 자동 Fallback
 
     # (선택) 카메라 내참수 (예시값 → 실제 보정 값으로 교체)
     # fx, fy, cx, cy는 사용자 환경에 맞게 입력

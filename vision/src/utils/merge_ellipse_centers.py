@@ -1,7 +1,7 @@
 import json
 import os
 
-def merge_left_right(left_json_path, right_json_path, save_path="vision/inference/result/ellipse_centers.json"):
+def merge_left_right(left_json_path, right_json_path, save_path="vision/result/ellipse_centers.json"):
     # --- 파일 로드 ---
     with open(left_json_path, "r") as f:
         left_data = json.load(f)
@@ -38,6 +38,6 @@ def merge_left_right(left_json_path, right_json_path, save_path="vision/inferenc
 
 
 if __name__ == "__main__":
-    left_json_path = "vision/Inference/image/detect_left_view/left_view_left_ellipse.json"
-    right_json_path = "vision/Inference/image/detect_right_view/right_view_right_ellipse.json"
+    left_json_path = "vision/image/detect_left_view/left_view_left_ellipse.json"
+    right_json_path = "vision/image/detect_right_view/right_view_right_ellipse.json"
     merge_left_right(left_json_path, right_json_path)

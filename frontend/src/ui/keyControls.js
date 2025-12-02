@@ -2,6 +2,7 @@
 export function initKeyControls({
   socket,
   captureAndSendFrame,
+  captureAndSendMainCamFrame,
   sendDetection,
   getFocus,
   setFocus,
@@ -23,6 +24,7 @@ export function initKeyControls({
       console.log('[WS] pose sent');
     }
     if (e.code === 'KeyL' && captureAndSendFrame) captureAndSendFrame();
+    if (e.code === 'KeyM' && captureAndSendMainCamFrame) captureAndSendMainCamFrame();
     if (e.code === 'KeyK' && sendDetection) sendDetection();
     if (e.code === 'Tab') {
       const next = getFocus() === 'USER' ? 'ARM_CAM' : 'USER';

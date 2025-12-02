@@ -14,6 +14,7 @@ const LABEL_PATH =
   path.resolve(process.cwd(), '..', 'vision', 'dataset', 'raw', 'labels.csv');
 const FRAME_DIR_LEFT = path.join(DATASET_ROOT, 'left');
 const FRAME_DIR_RIGHT = path.join(DATASET_ROOT, 'right');
+const FRAME_DIR_MAIN = path.join(DATASET_ROOT, 'main');
 
 async function ensureDir(dir) {
   await fs.promises.mkdir(dir, { recursive: true });
@@ -72,7 +73,8 @@ async function appendCsvRow(rowArr) {
     'cam_tx','cam_ty','cam_tz','cam_qx','cam_qy','cam_qz','cam_qw',
     'tcp_w_tx','tcp_w_ty','tcp_w_tz','tcp_w_qx','tcp_w_qy','tcp_w_qz','tcp_w_qw',
     'socket_w_tx','socket_w_ty','socket_w_tz','socket_w_qx','socket_w_qy','socket_w_qz','socket_w_qw',
-    'dist_tcp_socket','visible'
+    'dist_tcp_socket','visible',
+    'cameraId','sceneId','fx','fy','cx','cy'
   ];
   const line = rowArr.join(',') + '\n';
   const exists = fs.existsSync(LABEL_PATH);
@@ -85,6 +87,7 @@ async function saveFramePacket(packet = {}) {
   const {
     image,
     tcpToSocketPose,
+    camToSocketPose, // 메인 뷰 기준 상대포즈가 다른 키로 올 수도 있음
     tcpPoseWorld,
     socketPoseWorld,
     dist,
@@ -92,21 +95,39 @@ async function saveFramePacket(packet = {}) {
     joints = [],
     camPose = {},
     timestamp,
+    meta = {},
   } = packet;
-  if (!image?.left || !image?.right) throw new Error('frame packet missing image.left/right');
+  // 스키마 완화: image.main만 있을 때도 처리하고, 없으면 에러
+  const imgMain = image?.main;
+  const imgLeft = image?.left || imgMain;
+  const imgRight = image?.right || imgMain;
+  if (!imgLeft || !imgRight) throw new Error('frame packet missing image.left/right');
+
+  // 좌/우 외에 메인 뷰만 있을 수도 있으므로 상대포즈/가시성/카메라 포즈도 fallback
+  const relPose = camToSocketPose || tcpToSocketPose;
+  // camPose/visible도 main을 복사해 최소 필수 필드를 채움
+  const camPoseLeft = camPose.left || camPose.main;
+  const camPoseRight = camPose.right || camPose.main;
+  const visLeft = visible?.left ?? visible?.main;
+  const visRight = visible?.right ?? visible?.main;
+  const { cameraId, sceneId, intrinsics = {} } = meta || {};
   const ts = formatTsYYMMDDhhmmss(timestamp ?? Date.now());
 
   await ensureDir(FRAME_DIR_LEFT);
   await ensureDir(FRAME_DIR_RIGHT);
+  await ensureDir(FRAME_DIR_MAIN);
 
   const saveSide = async (side, img, camPoseSide, visibleVal) => {
-    const filename = buildFilename(side[0], dist, ts, tcpToSocketPose, visibleVal);
-    const outDir = side === 'left' ? FRAME_DIR_LEFT : FRAME_DIR_RIGHT;
+    const filename = buildFilename(side[0], dist, ts, relPose, visibleVal);
+    const outDir =
+      side === 'left' ? FRAME_DIR_LEFT :
+      side === 'right' ? FRAME_DIR_RIGHT :
+      FRAME_DIR_MAIN;
     const outPath = path.join(outDir, filename);
     const buf = Buffer.from(stripBase64Prefix(img.data), 'base64');
     await fs.promises.writeFile(outPath, buf);
 
-    const pose = tcpToSocketPose || {};
+    const pose = relPose || {};
     const pos = pose.position || {};
     const quat = pose.quaternion || {};
     const camPos = camPoseSide?.position || {};
@@ -118,7 +139,7 @@ async function saveFramePacket(packet = {}) {
     const js = joints || [];
     const row = [
       ts,
-      side === 'left' ? 'l' : 'r',
+      side === 'left' ? 'l' : side === 'right' ? 'r' : 'm',
       pos.x ?? '', pos.y ?? '', pos.z ?? '',
       quat.x ?? '', quat.y ?? '', quat.z ?? '', quat.w ?? '',
       js[0] ?? '', js[1] ?? '', js[2] ?? '', js[3] ?? '', js[4] ?? '', js[5] ?? '', js[6] ?? '',
@@ -129,13 +150,23 @@ async function saveFramePacket(packet = {}) {
       socketWPos.x ?? '', socketWPos.y ?? '', socketWPos.z ?? '',
       socketWQuat.x ?? '', socketWQuat.y ?? '', socketWQuat.z ?? '', socketWQuat.w ?? '',
       dist ?? '', visibleVal ?? '',
+      cameraId ?? '', sceneId ?? '',
+      intrinsics.fx ?? '', intrinsics.fy ?? '', intrinsics.cx ?? '', intrinsics.cy ?? '',
     ];
     await appendCsvRow(row);
     return outPath;
   };
 
-  const leftPath = await saveSide('left', image.left, camPose.left, visible?.left);
-  const rightPath = await saveSide('right', image.right, camPose.right, visible?.right);
+  // 메인 단일 뷰만 왔을 때는 main만 저장하고 반환
+  if (image?.main && !image?.left && !image?.right) {
+    const mainPose = camPose.main;
+    const visMain = visible?.main;
+    const mainPath = await saveSide('main', imgMain, mainPose, visMain);
+    return { mainPath };
+  }
+
+  const leftPath = await saveSide('left', imgLeft, camPoseLeft, visLeft);
+  const rightPath = await saveSide('right', imgRight, camPoseRight, visRight);
   return { leftPath, rightPath };
 }
 

@@ -42,7 +42,7 @@ def reconstruct_3d_points(centers_left, centers_right, disp_map, Q):
     return points_3d
 
 
-def save_3d_points(points_3d, save_path="vision/Inference/result/points_3d.json"):
+def save_3d_points(points_3d, save_path="vision/result/points_3d.json"):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, "w") as f:
         json.dump(points_3d, f, indent=2)
@@ -51,10 +51,10 @@ def save_3d_points(points_3d, save_path="vision/Inference/result/points_3d.json"
 
 if __name__ == "__main__":
     # ======== 경로 설정 ========
-    calib_file = "vision/Inference/config/stereo_calib.yaml"
-    depth_png = "vision/Inference/image/depth_map/depth_map.png"
-    centers_json = "vision/Inference/result/ellipse_centers.json"
-    save_path = "vision/Inference/result/points_3d.json"
+    calib_file = "vision/config/stereo_calib.yaml"
+    depth_png = "vision/image/depth_map/depth_map.png"
+    centers_json = "vision/result/ellipse_centers.json"
+    save_path = "vision/result/points_3d.json"
 
     # ======== 파일 로드 ========
     Q = load_Q_from_yaml(calib_file)

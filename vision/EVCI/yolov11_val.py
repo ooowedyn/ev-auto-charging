@@ -5,7 +5,7 @@ from ultralytics import YOLO
 model = YOLO("runs/EVCI_train/yolo11s_setA2/weights/best.pt")  # load a custom model
 
 # Validate the model
-metrics = model.val()  # no arguments needed, dataset and settings remembered
+metrics = model.val(data="cfg/datasets/EVCI.yaml")  # no arguments needed, dataset and settings remembered
 # metrics.box.map  # map50-95
 # metrics.box.map50  # map50
 # metrics.box.map75  # map75

@@ -99,17 +99,21 @@ def compute_depth_map(left_img_path, right_img_path, calib_file):
 
     disp_vis = cv2.normalize(disp, None, 0, 255, cv2.NORM_MINMAX)
     disp_vis = np.uint8(disp_vis)
-    cv2.imwrite("vision/Inference/image/depth_map/depth_map.png", disp_vis)
-    print("✅ depth_map.png saved")
+
+    depth_out = "vision/image/depth_map/depth_map.png"
+    os.makedirs(os.path.dirname(depth_out), exist_ok=True)
+    cv2.imwrite(depth_out, disp_vis)
+    print(f"✅ depth_map.png saved → {depth_out}")
 
     return disp, depth_map, points_3D
 
 
 if __name__ == "__main__":
-    json_file = "vision/Inference/config/stereo_params.json"
-    calib_file = "vision/Inference/config/stereo_calib.yaml"
-    left_img = "vision/Inference/image/original_left_view/left_view.png"
-    right_img = "vision/Inference/image/original_right_view/right_view.png"
+    # 경로를 Inference 폴더 없이 vision/config + vision/image로 정리
+    json_file = "vision/config/stereo_params.json"
+    calib_file = "vision/config/stereo_calib.yaml"
+    left_img = "vision/image/original_left_view/left_view.png"
+    right_img = "vision/image/original_right_view/right_view.png"
 
     # ① JS에서 YAML 자동 생성
     if not os.path.exists(calib_file):

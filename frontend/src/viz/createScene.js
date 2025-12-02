@@ -16,16 +16,24 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export function createScene(canvas) {
+  const CAP_W = 640;
+  const CAP_H = 480;
+  const ASPECT = CAP_W / CAP_H;
+
   const scene = new THREE.Scene();
   // 살짝 어두운 야외 톤
   scene.background = new THREE.Color(0x8ca0b3);
 
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+  // 메인 카메라를 스테레오와 동일한 내부 파라미터(fov/near/far, 640x480 기준 aspect)로 맞춤
+  const camera = new THREE.PerspectiveCamera(60, ASPECT, 0.01, 20);
   camera.position.set(3.5, 2.2, 4.2);
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+  renderer.setSize(CAP_W, CAP_H, false);
+  renderer.setPixelRatio(1); // 스테레오와 동일 캡처 해상도 유지
+  // CSS 크기도 고정해 창 리사이즈나 레이아웃 영향 없이 640x480 유지
+  renderer.domElement.style.width = `${CAP_W}px`;
+  renderer.domElement.style.height = `${CAP_H}px`;
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
@@ -94,13 +102,14 @@ spot.position.set(0, 0, 0.2); // 카메라 바로 앞쪽
 spot.target.position.set(0, 0, -1); // 기본적으로 카메라 전방 조준
 camera.add(spot);
 camera.add(spot.target);
-scene.add(spot);
+  scene.add(spot);
 
   // 컨트롤
   window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    // 해상도/비율 고정: 640x480, ASPECT 유지
+    camera.aspect = ASPECT;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(CAP_W, CAP_H, false);
   });
   return { scene, camera, renderer, controls, dir };
 }

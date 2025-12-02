@@ -288,10 +288,10 @@ class EllipseFitterModule:
 # Main
 # ------------------------------
 if __name__ == "__main__":
-    LEFT_ORI  = "vision/Inference/image/original_left_view/left_view.png"
-    RIGHT_ORI = "vision/Inference/image/original_right_view/right_view.png"
-    LEFT_DET_DIR  = "vision/Inference/image/detect_left_view"
-    RIGHT_DET_DIR = "vision/Inference/image/detect_right_view"
+    LEFT_ORI  = "vision/image/original_left_view/left_view.png"
+    RIGHT_ORI = "vision/image/original_right_view/right_view.png"
+    LEFT_DET_DIR  = "vision/image/detect_left_view"
+    RIGHT_DET_DIR = "vision/image/detect_right_view"
     LEFT_BBOX_JSON  = os.path.join(LEFT_DET_DIR,  "left_view_bbox.json")
     RIGHT_BBOX_JSON = os.path.join(RIGHT_DET_DIR, "right_view_bbox.json")
 
