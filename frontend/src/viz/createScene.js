@@ -19,6 +19,30 @@ export function createScene(canvas) {
   const CAP_W = 640;
   const CAP_H = 480;
   const ASPECT = CAP_W / CAP_H;
+  const STORAGE_KEY = "mainCameraState";
+
+  const loadSavedCameraState = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn("[camera] failed to load saved state", e);
+      return null;
+    }
+  };
+
+  const saveCameraState = (camera, controls) => {
+    try {
+      const state = {
+        pos: camera.position.toArray(),
+        target: controls?.target?.toArray?.() ?? null,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn("[camera] failed to save state", e);
+    }
+  };
 
   const scene = new THREE.Scene();
   // 살짝 어두운 야외 톤
@@ -27,13 +51,17 @@ export function createScene(canvas) {
   // 메인 카메라를 스테레오와 동일한 내부 파라미터(fov/near/far, 640x480 기준 aspect)로 맞춤
   const camera = new THREE.PerspectiveCamera(60, ASPECT, 0.01, 20);
   camera.position.set(3.5, 2.2, 4.2);
+  const saved = loadSavedCameraState();
+  if (saved?.pos?.length === 3) {
+    camera.position.fromArray(saved.pos);
+  }
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(CAP_W, CAP_H, false);
   renderer.setPixelRatio(1); // 스테레오와 동일 캡처 해상도 유지
-  // CSS 크기도 고정해 창 리사이즈나 레이아웃 영향 없이 640x480 유지
-  renderer.domElement.style.width = `${CAP_W}px`;
-  renderer.domElement.style.height = `${CAP_H}px`;
+  // 렌더 버퍼는 640x480 유지, 화면 표시만 가로로 1.5배 확장 (960x480)
+  renderer.domElement.style.width = `960px`;
+  renderer.domElement.style.height = `480px`;
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
@@ -41,8 +69,13 @@ export function createScene(canvas) {
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.target.set(0, 0.8, 0);
+  if (saved?.target?.length === 3) {
+    controls.target.fromArray(saved.target);
+  } else {
+    controls.target.set(0, 0.8, 0);
+  }
   controls.update();
+  controls.addEventListener("change", () => saveCameraState(camera, controls));
 
   // 메쉬 구성
   const floor = new THREE.Mesh(
@@ -92,8 +125,8 @@ const fillDir = new THREE.DirectionalLight(0xffffff, 0.4);
 fillDir.position.set(-4, 3, -4);
 scene.add(fillDir);
 
-// 카메라에 장착된 스포트라이트 (스테레오 카메라가 보는 물체 강조)
-const spot = new THREE.SpotLight(0xffffff, 2.2, 10, Math.PI / 6, 0.25, 1.0);
+// 카메라에 장착된 스포트라이트 (스테레오 카메라가 보는 물체 강조) - 푸른 톤
+const spot = new THREE.SpotLight(0xa0c4ff, 2.2, 10, Math.PI / 6, 0.25, 1.0);
 spot.castShadow = true;
 spot.shadow.mapSize.set(1024, 1024);
 spot.shadow.camera.near = 0.1;
@@ -102,14 +135,14 @@ spot.position.set(0, 0, 0.2); // 카메라 바로 앞쪽
 spot.target.position.set(0, 0, -1); // 기본적으로 카메라 전방 조준
 camera.add(spot);
 camera.add(spot.target);
-  scene.add(spot);
+scene.add(spot);
 
   // 컨트롤
   window.addEventListener('resize', () => {
-    // 해상도/비율 고정: 640x480, ASPECT 유지
     camera.aspect = ASPECT;
     camera.updateProjectionMatrix();
     renderer.setSize(CAP_W, CAP_H, false);
   });
+  window.addEventListener('beforeunload', () => saveCameraState(camera, controls));
   return { scene, camera, renderer, controls, dir };
 }

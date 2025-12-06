@@ -11,14 +11,17 @@ renderStereo: Side-by-side L/R Rendering
 자주 수정하는 지점:
   - 좌/우 뷰포트 비율/레이아웃
 */
+import * as THREE from 'three';
 export function renderStereo(renderer, scene, camL, camR) {
   renderer.autoClear = false;
   renderer.setScissorTest(true);
   renderer.setClearColor(0x111318, 1);
   renderer.clear(true, true, true);
-  const W = renderer.domElement.clientWidth,
-    H = renderer.domElement.clientHeight,
-    HW = Math.floor(W / 2);
+  const size = new THREE.Vector2();
+  renderer.getSize(size);
+  const W = size.x;
+  const H = size.y;
+  const HW = Math.floor(W / 2);
 
   renderer.setViewport(0, 0, HW, H);
   renderer.setScissor(0, 0, HW, H);

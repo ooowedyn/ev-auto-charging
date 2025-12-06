@@ -520,8 +520,8 @@ function tick() {
 
     let vpX = 0, vpY = 0, vpW = w, vpH = h;
     if (window.VIEW_MODE === 'triple') {
-      // 좌: 메인, 우: 상단 L / 하단 R
-      const leftW = Math.floor(w * 0.6);
+      // 좌: 메인(80%), 우: 상단 L / 하단 R (20%)
+      const leftW = Math.floor(w * 0.8);
       const rightW = w - leftW;
       const halfH = Math.floor(h / 2);
       // three.js viewport origin이 좌하단 → 2D 캔버스 좌상단으로 변환

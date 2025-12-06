@@ -4,7 +4,7 @@ export function updateCameraFocus(focus, { controls, camera, camMoveKeys }) {
   if (focus === 'USER') {
     controls.enabled = true;
     controls.update();
-    const speed = 0.05;
+    const speed = 0.01; // move finer when controlling main camera
     const dirVec = new THREE.Vector3();
     const moveCam = (v, s) => {
       camera.position.addScaledVector(v, s);

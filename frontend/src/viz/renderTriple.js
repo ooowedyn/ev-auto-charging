@@ -12,14 +12,18 @@ renderTriple: Global + L/R 3-way Rendering
   - 좌/우 폭(예: 좌 60%), 상/하 분할 비율
   - 어떤 카메라를 전역뷰로 쓸지
 */
+import * as THREE from 'three';
 export function renderTriple(renderer, scene, camGlobal, camL, camR) {
   renderer.autoClear = false;
   renderer.setScissorTest(true);
   renderer.setClearColor(0x111318, 1);
   renderer.clear(true, true, true);
-  const W = renderer.domElement.clientWidth,
-    H = renderer.domElement.clientHeight;
-  const leftW = Math.floor(W * 0.6),
+  const size = new THREE.Vector2();
+  renderer.getSize(size);
+  const W = size.x;
+  const H = size.y;
+  // 메인 뷰를 더 크게, 스테레오 뷰를 작은 썸네일처럼 배치 (좌측 폭 확대)
+  const leftW = Math.floor(W * 0.8),
     rightW = W - leftW,
     halfH = Math.floor(H / 2);
 
