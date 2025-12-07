@@ -1,0 +1,2 @@
+epoch,train_total,train_pos,train_ori,train_trans_m,train_rot_deg,train_mae_x,train_mae_y,train_mae_z,train_mae_qx,train_mae_qy,train_mae_qz,train_mae_qw,val_total,val_pos,val_ori,val_trans_m,val_rot_deg,val_mae_x,val_mae_y,val_mae_z,val_mae_qx,val_mae_qy,val_mae_qz,val_mae_qw,lr
+1,63.076374,31.238043,0.150072,0.664002,14.351961,0.204024,0.151786,0.596132,0.060578,0.062915,0.047490,0.042931,58.339441,29.119279,0.025221,0.612325,7.804294,0.202584,0.142830,0.542999,0.035743,0.031066,0.026419,0.025856,1.000000e-04

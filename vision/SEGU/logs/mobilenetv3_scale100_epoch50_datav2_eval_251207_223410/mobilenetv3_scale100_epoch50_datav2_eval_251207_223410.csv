@@ -1,0 +1,1 @@
+filename,gt_x,gt_y,gt_z,gt_qx,gt_qy,gt_qz,gt_qw,pred_x,pred_y,pred_z,pred_qx,pred_qy,pred_qz,pred_qw,trans_err_m,rot_err_deg

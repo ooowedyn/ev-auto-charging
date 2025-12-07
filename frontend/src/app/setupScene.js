@@ -159,14 +159,6 @@ export async function setupScene() {
   if (chargerPort) chargerPort.add(portFrame);
   else chargerRoot.add(portFrame);
 
-  // (선택) 축 헬퍼
-  const portAxes = new THREE.AxesHelper(0.1);
-  portFrame.add(portAxes);
-  if (plugFrame) {
-    const plugAxes = new THREE.AxesHelper(0.1);
-    plugFrame.add(plugAxes);
-  }
-
   return {
     scene, camera, renderer, controls, dir,
     robot, stereo,

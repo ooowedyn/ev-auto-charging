@@ -33,8 +33,8 @@ from model.suPoseModel import PoseRegressor
 # -------------------------
 DEFAULTS = {
     "data_dir": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/datasets/all"),
-    "epochs": 50,
-    "batch_size": 16,
+    "epochs": 30,
+    "batch_size": 32,
     "lr": 1e-4,
     "img_size": 256,
     "num_workers": 4,
@@ -43,9 +43,9 @@ DEFAULTS = {
     "seed": 42,
     "backbone": "mobilenet_v3",
     "pretrained_path": "/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/pretrain/mobilenetv3-large-1cd25616.pth",
-    "run_name": "mobienetv3_scale100_epoch50",
+    "run_name": "mobienetv3_scale100_epoch30_datav2",
     "pos_scale": 100.0,   # 🔹 위치를 m → cm 단위로 스케일 (정밀도 향상용)
-    "mse_after": 30,      # 🔹 이 epoch 이후부터는 SmoothL1 대신 MSE 사용
+    "mse_after": 20,      # 🔸 (deprecated) SmoothL1만 사용 중
 }
 
 
@@ -141,7 +141,7 @@ def get_args():
     p.add_argument("--weight_decay", type=float, default=1e-4)
     p.add_argument("--run_name", type=str, default=DEFAULTS["run_name"], help="Prefix for run folder/files (e.g., mobv3)")
     p.add_argument("--pos_scale", type=float, default=DEFAULTS["pos_scale"], help="Scale factor for position (e.g., 100.0 for m→cm)")
-    p.add_argument("--mse_after", type=int, default=DEFAULTS["mse_after"], help="Use MSE loss for position after this epoch")
+    p.add_argument("--mse_after", type=int, default=DEFAULTS["mse_after"], help="(deprecated) SmoothL1 only")
     return p.parse_args()
 
 
@@ -150,7 +150,7 @@ def main():
     seed_everything(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] device: {device}")
-    print(f"[INFO] pos_scale={args.pos_scale}, mse_after={args.mse_after}")
+    print(f"[INFO] pos_scale={args.pos_scale}, loss=SmoothL1 (mse_after ignored)")
 
     # random split with seed
     img_paths = sorted(Path(args.data_dir).glob("*.png"))
@@ -220,9 +220,9 @@ def main():
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    # 🔹 위치 쪽 가중치 더 크게 (mm 정밀도 중요)
-    pos_w = 5.0
-    ori_w = 1.0
+    # 🔹 위치/자세 로스 가중치 (angle 기반, 추가 스케일 없음)
+    pos_w = 2.0
+    ori_w = 4.0
 
     # logging dirs with run name (logs/run_id/ 내부에 csv, tensorboard event, figs 모두 저장)
     timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -250,7 +250,6 @@ def main():
     best_val = float("inf")
 
     for epoch in range(1, args.epochs + 1):
-        use_mse = epoch > args.mse_after  # 🔹 이 epoch 이후로는 MSE 사용
         model.train()
         train_total = 0.0
         train_pos_sum = 0.0
@@ -267,17 +266,18 @@ def main():
 
             preds = model(imgs)  # preds[:, :3]는 스케일된 좌표 (× pos_scale)
 
-            # 🔹 위치 loss (SmoothL1 → MSE 전환)
-            if use_mse:
-                pos_loss = F.mse_loss(preds[:, :3], poses[:, :3])
-            else:
-                pos_loss = F.smooth_l1_loss(preds[:, :3], poses[:, :3])
+            # 🔹 위치 loss (SmoothL1 유지)
+            pos_loss = F.smooth_l1_loss(preds[:, :3], poses[:, :3])
 
-            # 🔹 회전 loss (쿼터니언 dot 기반)
+            # 🔹 회전 loss (쿼터니언 각도 기반)
             q_pred = preds[:, 3:]
             q_gt = poses[:, 3:]
-            dot = torch.sum(q_pred * q_gt, dim=1).clamp(-1.0, 1.0)
-            ori_loss = torch.mean(1.0 - torch.abs(dot))
+            dot = torch.sum(q_pred * q_gt, dim=1)
+            eps = 1e-4
+            dot = torch.clamp(torch.abs(dot), 0.0, 1.0 - eps)  # 수치 안정화 및 acos(1) 근처 방지
+
+            angle = 2.0 * torch.acos(dot)          # [0, π] rad
+            ori_loss = (angle ** 2).mean()         # angle 제곱으로 작은 각도 gradient 완화
 
             loss = pos_w * pos_loss + ori_w * ori_loss
             loss.backward()
@@ -293,7 +293,7 @@ def main():
             gt_pos_m = poses[:, :3] / args.pos_scale
 
             trans_err = torch.norm(pred_pos_m - gt_pos_m, dim=1)  # L2 (m)
-            rot_deg = torch.acos(torch.clamp(torch.abs(dot), -1.0, 1.0)) * 2 * 180.0 / torch.pi
+            rot_deg = angle * 180.0 / torch.pi                    # rad → deg
 
             train_trans_sum += trans_err.sum().item()
             train_rot_deg_sum += rot_deg.sum().item()
@@ -326,15 +326,17 @@ def main():
 
                 preds = model(imgs)
 
-                if use_mse:
-                    pos_loss = F.mse_loss(preds[:, :3], poses[:, :3])
-                else:
-                    pos_loss = F.smooth_l1_loss(preds[:, :3], poses[:, :3])
+                pos_loss = F.smooth_l1_loss(preds[:, :3], poses[:, :3])
 
                 q_pred = preds[:, 3:]
                 q_gt = poses[:, 3:]
-                dot = torch.sum(q_pred * q_gt, dim=1).clamp(-1.0, 1.0)
-                ori_loss = torch.mean(1.0 - torch.abs(dot))
+                dot = torch.sum(q_pred * q_gt, dim=1)
+                eps = 1e-4
+                dot = torch.clamp(torch.abs(dot), 0.0, 1.0 - eps)
+
+                angle = 2.0 * torch.acos(dot)          # [0, π] rad
+                ori_loss = (angle ** 2).mean()
+
                 loss = pos_w * pos_loss + ori_w * ori_loss
 
                 bsz = imgs.size(0)
@@ -346,7 +348,7 @@ def main():
                 gt_pos_m = poses[:, :3] / args.pos_scale
 
                 trans_err = torch.norm(pred_pos_m - gt_pos_m, dim=1)
-                rot_deg = torch.acos(torch.clamp(torch.abs(dot), -1.0, 1.0)) * 2 * 180.0 / torch.pi
+                rot_deg = angle * 180.0 / torch.pi
 
                 val_trans_sum += trans_err.sum().item()
                 val_rot_deg_sum += rot_deg.sum().item()
@@ -363,48 +365,32 @@ def main():
         val_mae_quat = (val_mae_quat_sum / len(val_loader.dataset)).tolist()
 
         # -------------------- LOGGING --------------------
-        tb_writer.add_scalars(
-            "loss",
-            {
-                "train_total": train_total,
-                "val_total": val_total,
-                "train_pos": train_pos_mean,
-                "train_ori": train_ori_mean,
-                "val_pos": val_pos_mean,
-                "val_ori": val_ori_mean,
-                "train_trans_err": train_trans_mean,
-                "val_trans_err": val_trans_mean,
-                "train_rot_deg": train_rot_mean,
-                "val_rot_deg": val_rot_mean,
-            },
-            epoch,
-        )
-        tb_writer.add_scalars(
-            "mae_pos",
-            {
-                "train_x": train_mae_pos[0],
-                "train_y": train_mae_pos[1],
-                "train_z": train_mae_pos[2],
-                "val_x": val_mae_pos[0],
-                "val_y": val_mae_pos[1],
-                "val_z": val_mae_pos[2],
-            },
-            epoch,
-        )
-        tb_writer.add_scalars(
-            "mae_quat",
-            {
-                "train_qx": train_mae_quat[0],
-                "train_qy": train_mae_quat[1],
-                "train_qz": train_mae_quat[2],
-                "train_qw": train_mae_quat[3],
-                "val_qx": val_mae_quat[0],
-                "val_qy": val_mae_quat[1],
-                "val_qz": val_mae_quat[2],
-                "val_qw": val_mae_quat[3],
-            },
-            epoch,
-        )
+        tb_writer.add_scalar("loss/train_total", train_total, epoch)
+        tb_writer.add_scalar("loss/val_total", val_total, epoch)
+        tb_writer.add_scalar("loss/train_pos", train_pos_mean, epoch)
+        tb_writer.add_scalar("loss/val_pos", val_pos_mean, epoch)
+        tb_writer.add_scalar("loss/train_ori", train_ori_mean, epoch)
+        tb_writer.add_scalar("loss/val_ori", val_ori_mean, epoch)
+        tb_writer.add_scalar("err/train_trans_m", train_trans_mean, epoch)
+        tb_writer.add_scalar("err/val_trans_m", val_trans_mean, epoch)
+        tb_writer.add_scalar("err/train_rot_deg", train_rot_mean, epoch)
+        tb_writer.add_scalar("err/val_rot_deg", val_rot_mean, epoch)
+
+        tb_writer.add_scalar("mae_pos/train_x", train_mae_pos[0], epoch)
+        tb_writer.add_scalar("mae_pos/train_y", train_mae_pos[1], epoch)
+        tb_writer.add_scalar("mae_pos/train_z", train_mae_pos[2], epoch)
+        tb_writer.add_scalar("mae_pos/val_x", val_mae_pos[0], epoch)
+        tb_writer.add_scalar("mae_pos/val_y", val_mae_pos[1], epoch)
+        tb_writer.add_scalar("mae_pos/val_z", val_mae_pos[2], epoch)
+
+        tb_writer.add_scalar("mae_quat/train_qx", train_mae_quat[0], epoch)
+        tb_writer.add_scalar("mae_quat/train_qy", train_mae_quat[1], epoch)
+        tb_writer.add_scalar("mae_quat/train_qz", train_mae_quat[2], epoch)
+        tb_writer.add_scalar("mae_quat/train_qw", train_mae_quat[3], epoch)
+        tb_writer.add_scalar("mae_quat/val_qx", val_mae_quat[0], epoch)
+        tb_writer.add_scalar("mae_quat/val_qy", val_mae_quat[1], epoch)
+        tb_writer.add_scalar("mae_quat/val_qz", val_mae_quat[2], epoch)
+        tb_writer.add_scalar("mae_quat/val_qw", val_mae_quat[3], epoch)
         tb_writer.add_scalar("lr", opt.param_groups[0]["lr"], epoch)
 
         csv_file.write(
@@ -424,8 +410,7 @@ def main():
             f"train_total={train_total:.6f} (pos={train_pos_mean:.6f}, ori={train_ori_mean:.6f}) "
             f"val_total={val_total:.6f} (pos={val_pos_mean:.6f}, ori={val_ori_mean:.6f}) "
             f"| train_trans={train_trans_mean:.6f}m val_trans={val_trans_mean:.6f}m "
-            f"train_rot={train_rot_mean:.3f}deg val_rot={val_rot_mean:.3f}deg "
-            f"{'(MSE)' if use_mse else '(SmoothL1)'}"
+            f"train_rot={train_rot_mean:.3f}deg val_rot={val_rot_mean:.3f}deg (SmoothL1)"
         )
 
         # save last checkpoint
@@ -453,24 +438,21 @@ def main():
     test_rot_deg_sum = 0.0
     test_count = 0
 
-    # 테스트에서는 마지막 epoch 기준으로 SmoothL1/MSE 선택 (optional)
-    use_mse_test = args.epochs > args.mse_after
-
     with torch.no_grad():
         for imgs, poses in tqdm(test_loader, desc="Test", leave=False):
             imgs = imgs.to(device)
             poses = poses.to(device)
             preds = model(imgs)
 
-            if use_mse_test:
-                pos_loss = F.mse_loss(preds[:, :3], poses[:, :3])
-            else:
-                pos_loss = F.smooth_l1_loss(preds[:, :3], poses[:, :3])
+            pos_loss = F.smooth_l1_loss(preds[:, :3], poses[:, :3])
 
             q_pred = preds[:, 3:]
             q_gt = poses[:, 3:]
-            dot = torch.sum(q_pred * q_gt, dim=1).clamp(-1.0, 1.0)
-            ori_loss = torch.mean(1.0 - torch.abs(dot))
+            dot = torch.sum(q_pred * q_gt, dim=1)
+            eps = 1e-4
+            dot = torch.clamp(torch.abs(dot), 0.0, 1.0 - eps)
+            angle = 2.0 * torch.acos(dot)  # [0, π] rad
+            ori_loss = (angle ** 2).mean()
             loss = pos_w * pos_loss + ori_w * ori_loss
 
             bsz = imgs.size(0)
@@ -482,7 +464,7 @@ def main():
             gt_pos_m = poses[:, :3] / args.pos_scale
 
             trans_err = torch.norm(pred_pos_m - gt_pos_m, dim=1)  # L2 per sample (m)
-            rot_deg = torch.acos(torch.clamp(torch.abs(dot), -1.0, 1.0)) * 2 * 180.0 / torch.pi
+            rot_deg = angle * 180.0 / torch.pi
 
             test_trans_err_sum += trans_err.sum().item()
             test_rot_deg_sum += rot_deg.sum().item()
@@ -497,7 +479,7 @@ def main():
     print(
         f"[TEST] total={test_total:.6f} (pos={test_pos_mean:.6f}, ori={test_ori_mean:.6f}) "
         f"| trans_err={test_trans_mean:.6f}m rot_err={test_rot_mean:.3f}deg "
-        f"{'(MSE)' if use_mse_test else '(SmoothL1)'}"
+        "(SmoothL1)"
     )
 
     csv_file.close()

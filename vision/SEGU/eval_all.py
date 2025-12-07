@@ -8,6 +8,7 @@ Units: position → meters, rotation → quaternion (unit norm). Errors: meters 
 """
 import argparse
 import math
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -26,16 +27,62 @@ from model.suPoseModel import PoseRegressor
 # 기본값 (필요 시 여기서 수정)
 DEFAULTS = {
     "data_dir": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/datasets/all"),
-    "ckpt": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/mobienetv3_scale100_epoch50_251207_012151/best.pth"),
+    "ckpt": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/mobienetv3_scale100_epoch30_datav2_251207_212512/best.pth"),
     "backbone": "mobilenet_v3",
     "pretrained": None,
-    "run_name": "mobilenetv3_scale100_epoch50_251207_012151",
+    "run_name": "mobienetv3_scale100_epoch30_datav2_251207_212512_eval",
     "out_root": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/logs"),
     "batch_size": 32,
     "num_workers": 4,
 }
 # 학습 시 사용한 pos_scale (m→cm: 100). GT는 m 단위이므로 되돌려 비교.
 POS_SCALE = 100.0
+
+
+def measure_model_complexity(model, loader, device):
+    """Estimate FLOPs, params, and FPS using a single forward pass."""
+    try:
+        sample_imgs, _, _ = next(iter(loader))
+    except StopIteration:
+        return None, None, None
+
+    sample_imgs = sample_imgs.to(device)
+    params_m = sum(p.numel() for p in model.parameters()) / 1e6
+
+    flops_g = None
+    try:
+        with torch.autograd.profiler.profile(
+            use_cuda=device.type == "cuda", with_flops=True, record_shapes=False
+        ) as prof:
+            with torch.no_grad():
+                model(sample_imgs)
+        flops_total = sum(e.flops for e in prof.key_averages() if e.flops is not None)
+        if flops_total and flops_total > 0:
+            flops_g = flops_total / 1e9
+    except Exception as e:
+        print(f"[WARN] FLOPs profiling failed: {e}")
+
+    fps = None
+    try:
+        warmup = 3
+        reps = 30
+        with torch.no_grad():
+            for _ in range(warmup):
+                model(sample_imgs)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        with torch.no_grad():
+            for _ in range(reps):
+                model(sample_imgs)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        elapsed = max(time.perf_counter() - t0, 1e-6)
+        fps = reps * sample_imgs.size(0) / elapsed
+    except Exception as e:
+        print(f"[WARN] FPS measurement failed: {e}")
+
+    return flops_g, params_m, fps
 
 
 def decode_coord(token: str) -> float:
@@ -108,6 +155,14 @@ def main():
     ckpt = torch.load(args.ckpt, map_location=device)
     model.load_state_dict(ckpt["model_state"])
     model.to(device).eval()
+
+    flops_g, params_m, fps = measure_model_complexity(model, loader, device)
+    if params_m is not None:
+        print(f"[MODEL] Params: {params_m:.3f} M")
+    if flops_g is not None:
+        print(f"[MODEL] FLOPs: {flops_g:.3f} GFLOPs (per batch)")
+    if fps is not None:
+        print(f"[MODEL] Speed: {fps:.2f} FPS (batch_size={args.batch_size})")
 
     timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
     run_id = f"{args.run_name}_{timestamp}"

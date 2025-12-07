@@ -126,7 +126,7 @@ fillDir.position.set(-4, 3, -4);
 scene.add(fillDir);
 
 // 카메라에 장착된 스포트라이트 (스테레오 카메라가 보는 물체 강조) - 푸른 톤
-const spot = new THREE.SpotLight(0xa0c4ff, 2.2, 10, Math.PI / 6, 0.25, 1.0);
+const spot = new THREE.SpotLight(0xffffff, 2.2, 10, Math.PI / 6, 0.25, 1.0);
 spot.castShadow = true;
 spot.shadow.mapSize.set(1024, 1024);
 spot.shadow.camera.near = 0.1;

@@ -30,34 +30,48 @@ export class HUD {
     camRelPose,
     distCam,
     visibleMain,
+    camEulerDeg,
     poseInferOn = false,
     poseInfer = null,
   }) {
     const fmt = (n) => (Number.isFinite(n) ? n.toFixed(3) : 'nan');
+    const quatToEulerDeg = (q = {}) => {
+      const x = q.x ?? 0, y = q.y ?? 0, z = q.z ?? 0, w = q.w ?? 1;
+      const sinr_cosp = 2 * (w * x + y * z);
+      const cosr_cosp = 1 - 2 * (x * x + y * y);
+      const roll = Math.atan2(sinr_cosp, cosr_cosp);
+
+      const sinp = 2 * (w * y - z * x);
+      const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * Math.PI / 2 : Math.asin(sinp);
+
+      const siny_cosp = 2 * (w * z + x * y);
+      const cosy_cosp = 1 - 2 * (y * y + z * z);
+      const yaw = Math.atan2(siny_cosp, cosy_cosp);
+
+      const rad2deg = 180 / Math.PI;
+      return {
+        roll: roll * rad2deg,
+        pitch: pitch * rad2deg,
+        yaw: yaw * rad2deg,
+      };
+    };
     const lines = [`[VIEW] ${viewMode} | FPS ${fps.toFixed(0)} | IK:${ikOn ? 'ON' : 'OFF'}`];
     if (this.extra) lines.push(this.extra);
     lines.push(`[POSE INFER] ${poseInferOn ? 'ON' : 'OFF'}`);
-    if (tcpPose) {
-      const p = tcpPose.position || {};
-      const q = tcpPose.quaternion || {};
-      lines.push(`TCP   pos(${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)}) quat(${fmt(q.x)}, ${fmt(q.y)}, ${fmt(q.z)}, ${fmt(q.w)})`);
-    }
-    if (socketPose) {
-      const p = socketPose.position || {};
-      const q = socketPose.quaternion || {};
-      lines.push(`Sock  pos(${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)}) quat(${fmt(q.x)}, ${fmt(q.y)}, ${fmt(q.z)}, ${fmt(q.w)})`);
-    }
-    if (relPose) {
-      const p = relPose.position || {};
-      const q = relPose.quaternion || {};
-      lines.push(`TCP->S pos(${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)}) quat(${fmt(q.x)}, ${fmt(q.y)}, ${fmt(q.z)}, ${fmt(q.w)})`);
-    }
     if (camRelPose) {
       const p = camRelPose.position || {};
       const q = camRelPose.quaternion || {};
       lines.push(
         `Cam->S pos(${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)}) quat(${fmt(q.x)}, ${fmt(q.y)}, ${fmt(q.z)}, ${fmt(q.w)}) dist:${fmt(distCam)} vis:${visibleMain ?? 'nan'}`
       );
+    }
+    if (socketPose?.quaternion) {
+      const rpy = quatToEulerDeg(socketPose.quaternion);
+      lines.push(`Sock RPY(deg) roll:${fmt(rpy.roll)} pitch:${fmt(rpy.pitch)} yaw:${fmt(rpy.yaw)}`);
+    }
+    if (camEulerDeg) {
+      const { x, y, z } = camEulerDeg;
+      lines.push(`Cam Euler(deg) roll:${fmt(x)} pitch:${fmt(y)} yaw:${fmt(z)}`);
     }
     if (poseInfer) {
       const gt = poseInfer.gt || {};

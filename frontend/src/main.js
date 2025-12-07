@@ -114,7 +114,6 @@ socket.on('pose-infer-result', (data) => {
     };
     if (poseMarkerRoot && worldPredPose.position) {
       poseMarker.visible = true;
-      poseMarkerAxes.visible = true;
       poseMarkerRoot.visible = true;
       poseMarkerRoot.position.set(
         worldPredPose.position.x,
@@ -146,14 +145,33 @@ socket.on('pose-infer-result', (data) => {
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('mousedown', (e) => {
   if (e.button === 2) mouseState.right = true;
+  if (e.button === 0 && controlFocus === CONTROL_FOCUS.USER) {
+    userRotate.dragging = true;
+    userRotate.last = { x: e.clientX, y: e.clientY };
+  }
 });
 window.addEventListener('mouseup', (e) => {
   if (e.button === 2) mouseState.right = false;
+  if (e.button === 0) userRotate.dragging = false;
 });
 window.addEventListener('mousemove', (e) => {
-  if (controlFocus !== CONTROL_FOCUS.ARM_CAM || !mouseState.right || !ikTarget) return;
-  const scale = 0.002;
-  moveIkTargetLocal(e.movementX * scale, -e.movementY * scale, 0);
+  // ARM_CAM: 우클릭 드래그로 IK 타깃 이동
+  if (controlFocus === CONTROL_FOCUS.ARM_CAM && mouseState.right && ikTarget) {
+    const scale = 0.002;
+    moveIkTargetLocal(e.movementX * scale, -e.movementY * scale, 0);
+  }
+  // USER: 좌클릭 드래그로 카메라 자전 (yaw/pitch만)
+  if (controlFocus === CONTROL_FOCUS.USER && userRotate.dragging) {
+    const dx = e.clientX - userRotate.last.x;
+    const dy = e.clientY - userRotate.last.y;
+    userRotate.last = { x: e.clientX, y: e.clientY };
+    const yaw = -dx * 0.0025;
+    const pitch = -dy * 0.0025;
+    const maxPitch = Math.PI / 2 - 0.01;
+    const nextPitch = THREE.MathUtils.clamp(camera.rotation.x + pitch, -maxPitch, maxPitch);
+    const nextYaw = camera.rotation.y + yaw;
+    camera.rotation.set(nextPitch, nextYaw, 0, 'YXZ');
+  }
 });
 window.addEventListener('wheel', (e) => {
   if (controlFocus !== CONTROL_FOCUS.ARM_CAM || !ikTarget) return;
@@ -178,10 +196,8 @@ let poseInferOn = false;
 let poseInferTimer = null;
 let lastPoseInfer = null;
 let poseMarker = null;
-let portAxes = null;
-const _tmpPos = new THREE.Vector3();
-const _tmpQuat = new THREE.Quaternion();
 let poseMarkerRoot = null;
+let userRotate = { dragging: false, last: { x: 0, y: 0 } };
 let poseMarkerAxes = null;
 
 const { scene, camera, renderer, controls, dir } = createScene();
@@ -190,12 +206,9 @@ const { scene, camera, renderer, controls, dir } = createScene();
   const mat = new THREE.MeshStandardMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
   poseMarker = new THREE.Mesh(geo, mat);
   poseMarker.visible = false;
-  poseMarkerAxes = new THREE.AxesHelper(0.1); // X=red, Y=green, Z=blue
-  poseMarkerAxes.visible = false;
   poseMarkerRoot = new THREE.Object3D();
   poseMarkerRoot.visible = false;
   poseMarkerRoot.add(poseMarker);
-  poseMarkerRoot.add(poseMarkerAxes);
   scene.add(poseMarkerRoot);
 }
 const hud = new HUD();
@@ -227,6 +240,7 @@ initKeyControls({
   captureAndSendFrame,
   captureAndSendMainCamFrame,
   sendDetection: toggleDetectStreaming,
+  resetCameraRPY,
   getFocus: () => controlFocus,
   setFocus,
   camMoveKeys,
@@ -247,9 +261,6 @@ loadCharger(scene)
   .then(({ portFrame: pf, chargerPort }) => {
     portFrame = pf;
     chargerPortMesh = chargerPort || null;
-    portAxes = new THREE.AxesHelper(0.12);
-    portAxes.visible = true;
-    scene.add(portAxes);
   })
   .catch((err) => console.error('Failed to load charger model:', err));
 
@@ -341,6 +352,16 @@ function captureAndSendMainCamFrame() {
   lastKeyAction = 'M: main cam saved & sent';
 }
 
+// 메인 카메라 롤/피치/요우를 지정 값으로 리셋
+function resetCameraRPY(rollDeg = 0, pitchDeg = -90, yawDeg = 0) {
+  const r = THREE.MathUtils.degToRad(rollDeg);
+  const p = THREE.MathUtils.degToRad(pitchDeg);
+  const y = THREE.MathUtils.degToRad(yawDeg);
+  camera.rotation.set(r, p, y, 'XYZ');
+  camera.updateMatrixWorld(true);
+  lastKeyAction = `R: cam rpy set to (${rollDeg}, ${pitchDeg}, ${yawDeg})`;
+}
+
 // Pose 추론용 프레임 전송 (P 키, 1Hz)
 function sendPoseFrame() {
   const data = captureMainCamData();
@@ -383,7 +404,6 @@ function togglePoseInfer() {
     poseInferTimer = null;
     lastKeyAction = 'P: pose infer OFF';
     if (poseMarker) poseMarker.visible = false;
-    if (poseMarkerAxes) poseMarkerAxes.visible = false;
     if (poseMarkerRoot) poseMarkerRoot.visible = false;
   }
 }
@@ -579,16 +599,8 @@ function tick() {
   // ✅ IK 타깃/조인트 변화가 즉시 반영되도록 월드행렬 먼저 갱신
   scene.updateMatrixWorld(true);
 
-  // 충전구 축 시각화 (월드 좌표계 기준)
-  if (portAxes && portFrame) {
-    portFrame.getWorldPosition(_tmpPos);
-    portFrame.getWorldQuaternion(_tmpQuat);
-    portAxes.position.copy(_tmpPos);
-    portAxes.quaternion.copy(_tmpQuat);
-  }
-
   // 포커스에 따라 카메라 제어
-  updateCameraFocus(controlFocus, { controls, camera, camMoveKeys });
+  updateCameraFocus(controlFocus, { controls, camera, camMoveKeys, selfRotate: controlFocus === CONTROL_FOCUS.USER });
 
   // 조그(JOG) 반영
   for (const n in input.HELD_JOG) {
@@ -623,6 +635,11 @@ function tick() {
   fps = 0.9 * fps + 0.1 * (1 / dt);
   let tcpPose = null, socketPose = null, relPose = null;
   let camRelPose = null, distCam = null, visMain = null;
+  const camEulerDeg = {
+    x: THREE.MathUtils.radToDeg(camera.rotation.x),
+    y: THREE.MathUtils.radToDeg(camera.rotation.y),
+    z: THREE.MathUtils.radToDeg(camera.rotation.z),
+  };
   if (plugFrame && portFrame) {
     tcpPose = matrixToPose(plugFrame.matrixWorld);
     socketPose = matrixToPose(portFrame.matrixWorld);
@@ -649,6 +666,7 @@ function tick() {
     camRelPose,
     distCam,
     visibleMain: visMain,
+    camEulerDeg,
     poseInferOn,
     poseInfer: lastPoseInfer,
   });

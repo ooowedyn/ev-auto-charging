@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 
-export function updateCameraFocus(focus, { controls, camera, camMoveKeys }) {
+export function updateCameraFocus(focus, { controls, camera, camMoveKeys, selfRotate = false }) {
   if (focus === 'USER') {
-    controls.enabled = true;
-    controls.update();
+    // 자전 모드에서는 OrbitControls를 끄고 카메라 이동만 직접 처리
+    controls.enabled = !selfRotate;
+    if (!selfRotate) controls.update();
     const speed = 0.01; // move finer when controlling main camera
     const dirVec = new THREE.Vector3();
     const moveCam = (v, s) => {

@@ -69,7 +69,11 @@ def run_once(model, device, b64_image: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Pose regression inference worker")
-    parser.add_argument("--weights", required=True, help="Path to best.pth checkpoint")
+    parser.add_argument(
+        "--weights",
+        default="/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/mobienetv3_scale100_epoch30_datav2_251207_212512/best.pth",
+        help="Path to best.pth checkpoint",
+    )
     parser.add_argument("--stdin-loop", action="store_true", help="Keep process alive and read JSON lines")
     args = parser.parse_args()
 
