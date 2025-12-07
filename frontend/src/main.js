@@ -23,6 +23,49 @@ import { JOINT_ORDER } from './config/jointMeta.js';
 import { getPose, matrixToPose, computeRelativePose } from './utils/poseUtils.js';
 import { getIntrinsicsFromCamera } from './utils/coords.js';
 
+function poseArrayToObj(arr = []) {
+  if (!Array.isArray(arr) || arr.length < 7) return null;
+  return {
+    position: { x: arr[0], y: arr[1], z: arr[2] },
+    quaternion: { x: arr[3], y: arr[4], z: arr[5], w: arr[6] },
+  };
+}
+
+function poseToMatrix(pose) {
+  const mat = new THREE.Matrix4();
+  const pos = new THREE.Vector3(
+    pose?.position?.x ?? 0,
+    pose?.position?.y ?? 0,
+    pose?.position?.z ?? 0
+  );
+  const quat = new THREE.Quaternion(
+    pose?.quaternion?.x ?? 0,
+    pose?.quaternion?.y ?? 0,
+    pose?.quaternion?.z ?? 0,
+    pose?.quaternion?.w ?? 1
+  );
+  mat.compose(pos, quat, new THREE.Vector3(1, 1, 1));
+  return mat;
+}
+
+function diffPose(gt, pred) {
+  const a = gt || {};
+  const b = pred || {};
+  return {
+    position: {
+      x: (b.position?.x ?? 0) - (a.position?.x ?? 0),
+      y: (b.position?.y ?? 0) - (a.position?.y ?? 0),
+      z: (b.position?.z ?? 0) - (a.position?.z ?? 0),
+    },
+    quaternion: {
+      x: (b.quaternion?.x ?? 0) - (a.quaternion?.x ?? 0),
+      y: (b.quaternion?.y ?? 0) - (a.quaternion?.y ?? 0),
+      z: (b.quaternion?.z ?? 0) - (a.quaternion?.z ?? 0),
+      w: (b.quaternion?.w ?? 0) - (a.quaternion?.w ?? 1),
+    },
+  };
+}
+
 // 소켓 생성 (그냥 전역 노출함)
 const socket = new SocketClient('ws://localhost:3101');
 window.socket = socket;
@@ -51,24 +94,53 @@ socket.on('vision-result', (data) => {
   };
 });
 
+socket.on('pose-infer-result', (data) => {
+  try {
+    const predObj = poseArrayToObj(data?.predPose || []);
+    const gt = data?.camToSocketPose || null;
+    const camPoseWorld = data?.camPoseWorld;
+    const socketPoseWorld = data?.socketPoseWorld;
+    const camMat = poseToMatrix(camPoseWorld);
+    const relMat = poseToMatrix(predObj);
+    const worldPredMat = camMat.clone().multiply(relMat);
+    const worldPredPose = matrixToPose(worldPredMat);
+    lastPoseInfer = {
+      frameId: data?.frameId,
+      pred: predObj,
+      gt,
+      err: diffPose(gt, predObj),
+      socketWorld: socketPoseWorld,
+      socketWorldPred: worldPredPose,
+    };
+    if (poseMarkerRoot && worldPredPose.position) {
+      poseMarker.visible = true;
+      poseMarkerAxes.visible = true;
+      poseMarkerRoot.visible = true;
+      poseMarkerRoot.position.set(
+        worldPredPose.position.x,
+        worldPredPose.position.y,
+        worldPredPose.position.z
+      );
+      if (worldPredPose.quaternion) {
+        poseMarkerRoot.quaternion.set(
+          worldPredPose.quaternion.x,
+          worldPredPose.quaternion.y,
+          worldPredPose.quaternion.z,
+          worldPredPose.quaternion.w
+        );
+      }
+    }
+  } catch (e) {
+    console.error('[pose-infer] handle error', e);
+  }
+});
+
 // (선택) request-frame을 서버가 보낼 수도 있지만,
 // 보통은 프론트가 주도적으로 스트리밍 시작.
-socket.startFrameStreaming(
-  () => renderer.domElement.toDataURL('image/jpeg', 0.7),
-  5 // fps
-);
-
-// (선택) 주기적 포즈 전송 (0.5초 간격 예시)
-let _poseTimer = setInterval(() => {
-  // JOINT_ORDER가 있다면 순서 보장해서 보내기
-  const joints = JOINT_ORDER.map((n) => robot.angles[n] ?? 0);
-  socket.send('pose-update', { joints });
-}, 500);
-
-// 서버에서 pose-update 수신
-socket.on('pose-update', (data) => {
-  console.log('서버로부터 pose-update 수신:', data);
-});
+// socket.startFrameStreaming(
+//   () => renderer.domElement.toDataURL('image/jpeg', 0.7),
+//   5 // fps
+// );
 
 // 마우스 입력 (ARM_CAM 포커스일 때 IK 타깃을 마우스로 이동)
 window.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -102,8 +174,30 @@ let detectStreaming = false;
 let detectTimer = null;
 
 let frustumState = { left: null, right: null };
+let poseInferOn = false;
+let poseInferTimer = null;
+let lastPoseInfer = null;
+let poseMarker = null;
+let portAxes = null;
+const _tmpPos = new THREE.Vector3();
+const _tmpQuat = new THREE.Quaternion();
+let poseMarkerRoot = null;
+let poseMarkerAxes = null;
 
 const { scene, camera, renderer, controls, dir } = createScene();
+{
+  const geo = new THREE.ConeGeometry(0.03, 0.08, 4);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x00aaff, transparent: true, opacity: 0.9 });
+  poseMarker = new THREE.Mesh(geo, mat);
+  poseMarker.visible = false;
+  poseMarkerAxes = new THREE.AxesHelper(0.1); // X=red, Y=green, Z=blue
+  poseMarkerAxes.visible = false;
+  poseMarkerRoot = new THREE.Object3D();
+  poseMarkerRoot.visible = false;
+  poseMarkerRoot.add(poseMarker);
+  poseMarkerRoot.add(poseMarkerAxes);
+  scene.add(poseMarkerRoot);
+}
 const hud = new HUD();
 const {
   robot,
@@ -137,6 +231,7 @@ initKeyControls({
   setFocus,
   camMoveKeys,
   robot,
+  togglePoseInfer,
 });
 
 // 로봇 모델 로드
@@ -152,6 +247,9 @@ loadCharger(scene)
   .then(({ portFrame: pf, chargerPort }) => {
     portFrame = pf;
     chargerPortMesh = chargerPort || null;
+    portAxes = new THREE.AxesHelper(0.12);
+    portAxes.visible = true;
+    scene.add(portAxes);
   })
   .catch((err) => console.error('Failed to load charger model:', err));
 
@@ -241,6 +339,53 @@ function captureAndSendMainCamFrame() {
   socket.send('frame', packet);
   console.log('[capture] frame packet sent (main cam)');
   lastKeyAction = 'M: main cam saved & sent';
+}
+
+// Pose 추론용 프레임 전송 (P 키, 1Hz)
+function sendPoseFrame() {
+  const data = captureMainCamData();
+  if (!data) return;
+  const {
+    mainBase64,
+    camPoseWorld,
+    socketPoseWorld,
+    camToSocket,
+  } = data;
+  const CAP_W = 640;
+  const CAP_H = 480;
+  const frameId = Date.now();
+  const packet = {
+    frameId,
+    timestamp: frameId,
+    image: {
+      main: { mime: 'image/png', encoding: 'base64', width: CAP_W, height: CAP_H, data: mainBase64 },
+    },
+    camPoseWorld: matrixToPose(camPoseWorld.matrix),
+    socketPoseWorld: matrixToPose(socketPoseWorld.matrix),
+    camToSocketPose: camToSocket,
+    meta: {
+      cameraId: 'main',
+      sceneId: 'default_scene',
+      intrinsics: getIntrinsicsFromCamera(camera, CAP_W, CAP_H),
+    },
+  };
+  socket.send('pose-frame', packet);
+}
+
+function togglePoseInfer() {
+  poseInferOn = !poseInferOn;
+  if (poseInferOn) {
+    if (poseInferTimer) clearInterval(poseInferTimer);
+    poseInferTimer = setInterval(sendPoseFrame, 1000);
+    lastKeyAction = 'P: pose infer ON';
+  } else {
+    if (poseInferTimer) clearInterval(poseInferTimer);
+    poseInferTimer = null;
+    lastKeyAction = 'P: pose infer OFF';
+    if (poseMarker) poseMarker.visible = false;
+    if (poseMarkerAxes) poseMarkerAxes.visible = false;
+    if (poseMarkerRoot) poseMarkerRoot.visible = false;
+  }
 }
 
 // 공용 스테레오 캡처 (L/R 및 포즈/가시성 포함)
@@ -434,6 +579,14 @@ function tick() {
   // ✅ IK 타깃/조인트 변화가 즉시 반영되도록 월드행렬 먼저 갱신
   scene.updateMatrixWorld(true);
 
+  // 충전구 축 시각화 (월드 좌표계 기준)
+  if (portAxes && portFrame) {
+    portFrame.getWorldPosition(_tmpPos);
+    portFrame.getWorldQuaternion(_tmpQuat);
+    portAxes.position.copy(_tmpPos);
+    portAxes.quaternion.copy(_tmpQuat);
+  }
+
   // 포커스에 따라 카메라 제어
   updateCameraFocus(controlFocus, { controls, camera, camMoveKeys });
 
@@ -496,6 +649,8 @@ function tick() {
     camRelPose,
     distCam,
     visibleMain: visMain,
+    poseInferOn,
+    poseInfer: lastPoseInfer,
   });
 
   // 렌더링

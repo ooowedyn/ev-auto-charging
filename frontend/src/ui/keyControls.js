@@ -8,21 +8,18 @@ export function initKeyControls({
   setFocus,
   camMoveKeys,
   robot,
+  togglePoseInfer,
 }) {
   const blockKeys = [
     'KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE',
     'Space','Digit1','Digit2','Digit3','Digit4','Digit5','Digit6',
-    'KeyZ','KeyF','KeyG','KeyU','KeyI','KeyO','Digit8','Digit9','Digit0','KeyK'
+    'KeyZ','KeyF','KeyG','KeyU','KeyI','KeyO','Digit8','Digit9','Digit0','KeyK','KeyP'
   ];
 
   const onKeyDown = (e) => {
     if (blockKeys.includes(e.code) || e.code === 'Tab') e.preventDefault();
 
-    if (e.code === 'KeyP') {
-      const joints = Object.values(robot.angles);
-      socket.send('pose-update', { joints });
-      console.log('[WS] pose sent');
-    }
+    if (e.code === 'KeyP' && togglePoseInfer) togglePoseInfer();
     if (e.code === 'KeyL' && captureAndSendFrame) captureAndSendFrame();
     if (e.code === 'KeyM' && captureAndSendMainCamFrame) captureAndSendMainCamFrame();
     if (e.code === 'KeyK' && sendDetection) sendDetection();

@@ -3,6 +3,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import fs from 'fs';
 import path from 'path';
 import { processStereoFrame } from '../services/stereoVisionService.js';
+import { inferPose } from '../services/pythonPoseWorker.js';
 
 // 기본 저장 경로: 프로젝트/vision/dataset/raw/images (left/right 하위 폴더)
 // 필요 시 DATASET_ROOT 환경변수로 오버라이드
@@ -250,6 +251,27 @@ export function initWebSocket(server) {
         case 'request-frame':
           // 특정 프론트에 프레임을 요청하거나 전체에 요청 가능
           broadcast({ type: 'request-frame', data }, ws);
+          break;
+
+        case 'pose-frame':
+          try {
+            const img = data?.image?.main;
+            if (!img?.data) throw new Error('missing main image');
+            const result = await inferPose(img.data);
+            const resp = {
+              frameId: data?.frameId ?? Date.now(),
+              timestamp: data?.timestamp ?? Date.now(),
+              predPose: result?.pred ?? [],
+              camPoseWorld: data?.camPoseWorld,
+              socketPoseWorld: data?.socketPoseWorld,
+              camToSocketPose: data?.camToSocketPose,
+              meta: data?.meta || {},
+            };
+            ws.send(JSON.stringify({ type: 'pose-infer-result', data: resp }));
+          } catch (err) {
+            console.error('[WS] pose-frame error', err.message);
+            ws.send(JSON.stringify({ type: 'error', data: { reason: 'pose-frame-failed', message: err.message } }));
+          }
           break;
 
         default:

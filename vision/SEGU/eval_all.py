@@ -7,14 +7,16 @@ Filename format assumed:
 Units: position → meters, rotation → quaternion (unit norm). Errors: meters and degrees.
 """
 import argparse
-from pathlib import Path
 import math
+from datetime import datetime
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from PIL import Image
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
@@ -24,14 +26,16 @@ from model.suPoseModel import PoseRegressor
 # 기본값 (필요 시 여기서 수정)
 DEFAULTS = {
     "data_dir": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/datasets/all"),
-    "ckpt": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/best.pth"),
+    "ckpt": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/mobienetv3_scale100_epoch50_251207_012151/best.pth"),
     "backbone": "mobilenet_v3",
-    "pretrained": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/pretrain/mobilenetv3-large-1cd25616.pth"),
-    "out_csv": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/logs/csv/eval_results.csv"),
+    "pretrained": None,
+    "run_name": "mobilenetv3_scale100_epoch50_251207_012151",
+    "out_root": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/logs"),
     "batch_size": 32,
     "num_workers": 4,
-    "plot_dir": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/logs/figs"),
 }
+# 학습 시 사용한 pos_scale (m→cm: 100). GT는 m 단위이므로 되돌려 비교.
+POS_SCALE = 100.0
 
 
 def decode_coord(token: str) -> float:
@@ -76,12 +80,12 @@ def get_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data_dir", type=Path, default=DEFAULTS["data_dir"], help="Folder with *.png images")
     p.add_argument("--ckpt", type=Path, default=DEFAULTS["ckpt"], help="Checkpoint path (best.pth/last.pth)")
-    p.add_argument("--backbone", type=str, default=DEFAULTS["backbone"], choices=["resnet18", "mobilenet_v2", "mobilenet_v3"])
+    p.add_argument("--backbone", type=str, default=DEFAULTS["backbone"], choices=["mobilenet_v2", "mobilenet_v3"])
     p.add_argument("--pretrained", type=Path, default=DEFAULTS["pretrained"], help="Optional pretrained backbone weights")
     p.add_argument("--batch_size", type=int, default=DEFAULTS["batch_size"])
     p.add_argument("--num_workers", type=int, default=DEFAULTS["num_workers"])
-    p.add_argument("--out_csv", type=Path, default=DEFAULTS["out_csv"])
-    p.add_argument("--plot_dir", type=Path, default=DEFAULTS["plot_dir"])
+    p.add_argument("--run_name", type=str, default=DEFAULTS["run_name"], help="Prefix for eval outputs")
+    p.add_argument("--out_root", type=Path, default=DEFAULTS["out_root"], help="Root dir to store csv/figs")
     return p.parse_args()
 
 
@@ -105,9 +109,12 @@ def main():
     model.load_state_dict(ckpt["model_state"])
     model.to(device).eval()
 
-    args.out_csv.parent.mkdir(parents=True, exist_ok=True)
-    args.plot_dir.mkdir(parents=True, exist_ok=True)
-    f = args.out_csv.open("w")
+    timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+    run_id = f"{args.run_name}_{timestamp}"
+    out_dir = Path(args.out_root) / run_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_csv = out_dir / f"{run_id}.csv"
+    f = out_csv.open("w")
     f.write("filename,gt_x,gt_y,gt_z,gt_qx,gt_qy,gt_qz,gt_qw,pred_x,pred_y,pred_z,pred_qx,pred_qy,pred_qz,pred_qw,trans_err_m,rot_err_deg\n")
 
     trans_sum = 0.0
@@ -123,8 +130,10 @@ def main():
             imgs = imgs.to(device)
             gts = gts.to(device)
             preds = model(imgs)
+            preds_pos_m = preds[:, :3] / POS_SCALE
+            preds_full_m = torch.cat([preds_pos_m, preds[:, 3:]], dim=1)
 
-            trans_err = torch.norm(preds[:, :3] - gts[:, :3], dim=1)  # meters
+            trans_err = torch.norm(preds_pos_m - gts[:, :3], dim=1)  # meters
             q_pred = preds[:, 3:]
             q_gt = gts[:, 3:]
             dot = torch.sum(q_pred * q_gt, dim=1).clamp(-1.0, 1.0)
@@ -132,7 +141,7 @@ def main():
 
             for i in range(preds.size(0)):
                 gt = gts[i].cpu().tolist()
-                pr = preds[i].cpu().tolist()
+                pr = preds_full_m[i].cpu().tolist()
                 f.write(
                     f"{names[i]},"
                     f"{gt[0]:.6f},{gt[1]:.6f},{gt[2]:.6f},{gt[3]:.6f},{gt[4]:.6f},{gt[5]:.6f},{gt[6]:.6f},"
@@ -152,7 +161,7 @@ def main():
     trans_mean = trans_sum / max(count, 1)
     rot_mean = rot_sum / max(count, 1)
     print(f"[EVAL] images={count} | mean trans_err={trans_mean:.6f} m | mean rot_err={rot_mean:.3f} deg")
-    print(f"[EVAL] saved CSV → {args.out_csv}")
+    print(f"[EVAL] saved CSV → {out_csv}")
 
     # 추가 통계 및 시각화
     import numpy as np
@@ -188,8 +197,8 @@ def main():
             plt.savefig(path)
             plt.close()
 
-        scatter_save(gt_arr[:, 0], pred_arr[:, 0], "X", args.plot_dir / "scatter_x.png")
-        scatter_save(gt_arr[:, 2], pred_arr[:, 2], "Z", args.plot_dir / "scatter_z.png")
+        scatter_save(gt_arr[:, 0], pred_arr[:, 0], "X", out_dir / f"{run_id}_scatter_x.png")
+        scatter_save(gt_arr[:, 2], pred_arr[:, 2], "Z", out_dir / f"{run_id}_scatter_z.png")
 
         # Histogram of position error (cm)
         plt.figure()
@@ -198,10 +207,10 @@ def main():
         plt.ylabel("Count")
         plt.title("Histogram of position error")
         plt.tight_layout()
-        plt.savefig(args.plot_dir / "hist_pos_error.png")
+        plt.savefig(out_dir / f"{run_id}_hist_pos_error.png")
         plt.close()
 
-        print(f"[EVAL] Saved plots to {args.plot_dir}")
+        print(f"[EVAL] Saved plots to {out_dir}")
 
 
 if __name__ == "__main__":

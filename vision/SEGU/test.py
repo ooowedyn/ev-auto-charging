@@ -22,17 +22,19 @@ from model.suPoseModel import PoseRegressor
 # 기본 경로/옵션 (필요하면 여기서 직접 수정)
 DEFAULTS = {
     "img": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/datasets/all/m_251203_020606020_0d008_0d038_m0d153_0d486_m0d001_0d001_0d874_0d158_1.png"),
-    "ckpt": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/best.pth"),
+    "ckpt": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/mobienetv3_scale100_epoch50_251207_012151/best.pth"),
     "backbone": "mobilenet_v3",
-    "pretrained": Path("/mnt/d/ev-auto-chargingfork/vision/SEGU/checkpoints/pretrain/mobilenetv3-large-1cd25616.pth"),
+    "pretrained": None,
 }
+
+POS_SCALE = 100.0  # 학습 시 m→cm 스케일링. 추론 출력은 다시 m 단위로 변환.
 
 
 def get_args():
     p = argparse.ArgumentParser()
     p.add_argument("--img", type=Path, default=DEFAULTS["img"], help="Path to test image")
     p.add_argument("--ckpt", type=Path, default=DEFAULTS["ckpt"], help="Checkpoint path (best.pth/last.pth)")
-    p.add_argument("--backbone", type=str, default=DEFAULTS["backbone"], choices=["resnet18", "mobilenet_v2", "mobilenet_v3"])
+    p.add_argument("--backbone", type=str, default=DEFAULTS["backbone"], choices=["mobilenet_v2", "mobilenet_v3"])
     p.add_argument("--pretrained", type=Path, default=DEFAULTS["pretrained"], help="Optional pretrained backbone weights")
     return p.parse_args()
 
@@ -58,7 +60,7 @@ def main():
     with torch.no_grad():
         pred = model(x).squeeze(0).cpu()
 
-    pos = pred[:3].tolist()
+    pos = (pred[:3] / POS_SCALE).tolist()
     quat = pred[3:].tolist()
     gt = None
     try:

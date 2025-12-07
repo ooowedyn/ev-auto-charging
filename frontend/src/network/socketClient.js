@@ -31,6 +31,7 @@ export class SocketClient {
   _handleMessage(event) {
     try {
       const msg = JSON.parse(event.data);
+      if (msg.type === 'ack') return; // suppress noisy ACK logs
       // 디버깅 출력
       console.log('[WS recv]', msg);
       const cb = this.handlers[msg.type];
